@@ -1,6 +1,6 @@
 // Push-Mitteilungen: Anmeldungen speichern und alle 15 Minuten nach neuen Warnungen schauen.
 // Speicher: Cloudflare KV (Bindung PUSH). Schlüssel:
-//   sub:<hash>          → Push-Anmeldung eines Geräts (JSON)
+//   sub:<hash>          → Push-Anmeldung eines Geräts (JSON, mit Einstellung morning: true/false)
 //   seen:<art>:<id>     → diese Meldung wurde schon verschickt (läuft automatisch ab)
 // Geheimnis: VAPID_PRIVATE_JWK (mit „wrangler secret put“ gesetzt, nie im Code)
 
@@ -28,7 +28,7 @@ export function pushCors(request) {
   };
 }
 
-// POST /push/subscribe und /push/unsubscribe
+// POST /push/subscribe, /push/unsubscribe und /push/prefs (Morgen-Briefing an/aus oder abfragen)
 export async function handlePush(request, env, pathname) {
   const cors = pushCors(request);
   const reply = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...cors } });
@@ -47,8 +47,15 @@ export async function handlePush(request, env, pathname) {
     await env.PUSH.delete(key);
     return reply({ ok: true });
   }
+  if (pathname === "/push/prefs") {
+    const cur = await env.PUSH.get(key, "json");
+    if (!cur) return reply({ error: "Nicht angemeldet" }, 404);
+    if (typeof sub.morning === "boolean") await env.PUSH.put(key, JSON.stringify({ ...cur, morning: sub.morning }));
+    return reply({ morning: typeof sub.morning === "boolean" ? sub.morning : !!cur.morning });
+  }
   if (!sub.keys?.p256dh || !sub.keys?.auth) return reply({ error: "Schlüssel fehlen" }, 400);
-  await env.PUSH.put(key, JSON.stringify({ endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } }));
+  const prev = await env.PUSH.get(key, "json");
+  await env.PUSH.put(key, JSON.stringify({ endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth }, morning: !!prev?.morning }));
   // Begrüßung, damit man sofort sieht, dass es klappt
   await sendTo(env, key, { endpoint: sub.endpoint, keys: sub.keys }, { title: "Warnungen sind an", body: "Du bekommst eine Mitteilung bei Unwetter, Glätte am Morgen und neuen Sperrungen auf der A81.", tag: "hallo" });
   return reply({ ok: true });
@@ -61,18 +68,19 @@ async function sendTo(env, key, subscription, message) {
     message: { payload: { ...message, url: PAGE }, adminContact: "https://github.com/leifkr-source/schoenbuch-wetter", options: { ttl: 6 * 3600, urgency: "high", topic: message.tag?.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) } },
   });
   const r = await fetch(endpoint, { method: "POST", headers, body });
+  if (!r.ok) console.log("Push", r.status, await r.text().catch(() => ""));
   // Abgemeldete Geräte aufräumen
   if (r.status === 404 || r.status === 410) await env.PUSH.delete(key);
   return r.ok;
 }
 
-async function broadcast(env, message) {
+async function broadcast(env, message, only = () => true) {
   let cursor, sent = 0;
   do {
     const page = await env.PUSH.list({ prefix: "sub:", cursor });
     for (const { name } of page.keys) {
       const sub = await env.PUSH.get(name, "json");
-      if (sub && (await sendTo(env, name, sub, message).catch(() => false))) sent++;
+      if (sub && only(sub) && (await sendTo(env, name, { endpoint: sub.endpoint, keys: sub.keys }, message).catch(() => false))) sent++;
     }
     cursor = page.list_complete ? null : page.cursor;
   } while (cursor);
@@ -89,11 +97,61 @@ async function once(env, id, ttl, message, quiet) {
 }
 
 const fmt = (d, o) => new Intl.DateTimeFormat("de-DE", { timeZone: TZ, ...o }).format(new Date(d));
-const localHour = (d = new Date()) => +fmt(d, { hour: "numeric", hourCycle: "h23" });
+// Stunde über formatToParts, weil „de-DE“ sonst „6 Uhr“ liefert
+const localHour = (d = new Date()) => +new Intl.DateTimeFormat("de-DE", { timeZone: TZ, hour: "numeric", hourCycle: "h23" }).formatToParts(new Date(d)).find((p) => p.type === "hour").value;
 const localDay = (d) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date(d));
 
+// Morgen-Briefing: Wetter heute, Glätte, Schönbuchbahn und Anschluss, A81 – in einer Mitteilung
+async function morningBriefing({ lat, lon }, loadVerkehr, loadBahn) {
+  const today = localDay(Date.now()), yesterday = localDay(Date.now() - 864e5);
+  const [wx, bahn, verkehr] = await Promise.allSettled([
+    fetch(`https://api.brightsky.dev/weather?lat=${lat}&lon=${lon}&date=${yesterday}&last_date=${today}T23:00&tz=${TZ}`).then((r) => r.json()),
+    loadBahn(),
+    loadVerkehr(),
+  ]);
+  const parts = [];
+  let title = "Guten Morgen";
+  if (wx.status === "fulfilled") {
+    const all = wx.value.weather || [];
+    const day = (k) => all.filter((x) => localDay(x.timestamp) === k && localHour(x.timestamp) >= 7 && localHour(x.timestamp) <= 21);
+    const hrs = day(today), prev = day(yesterday);
+    const now = all.find((x) => localDay(x.timestamp) === today && localHour(x.timestamp) === localHour());
+    const hi = Math.max(...hrs.map((x) => x.temperature));
+    const wet = (x) => (x.precipitation || 0) >= 0.1 || (x.precipitation_probability || 0) >= 60;
+    const firstWet = hrs.findIndex(wet);
+    let rain;
+    if (firstWet === -1) rain = "trocken";
+    else if (firstWet === 0) { const dry = hrs.findIndex((x) => !wet(x)); rain = dry === -1 ? "Regen den ganzen Tag" : `Regen bis etwa ${localHour(hrs[dry].timestamp)} Uhr`; }
+    else rain = `trocken bis ${localHour(hrs[firstWet].timestamp)} Uhr`;
+    if (now) title = `Guten Morgen: ${Math.round(now.temperature)} °C, ${rain}`;
+    let line = `Höchstens ${Math.round(hi)} °C`;
+    if (prev.length >= 6) {
+      const diff = Math.round(hi - Math.max(...prev.map((x) => x.temperature)));
+      if (Math.abs(diff) >= 2) line += `, ${Math.abs(diff)} Grad ${diff > 0 ? "wärmer" : "kälter"} als gestern`;
+    }
+    parts.push(line + ".");
+    const morning = all.filter((x) => localDay(x.timestamp) === today && localHour(x.timestamp) >= 5 && localHour(x.timestamp) <= 8);
+    if (morning.length && Math.min(...morning.map((x) => x.temperature)) <= 0.5) parts.push("Scheibe kratzen, evtl. glatt.");
+  }
+  if (bahn.status === "fulfilled") {
+    const b = bahn.value, soon = (a) => Date.parse(a.echt || a.plan) < Date.now() + 2 * 36e5;
+    const hz = b.abfahrten.filter(soon);
+    const bad = hz.filter((a) => a.ausfall || a.verspaetung >= 5).length;
+    const s1 = (b.boeblingen?.stuttgart || []).filter((a) => a.ausfall || a.verspaetung >= 5).length;
+    let t = hz.some((a) => a.ersatz) ? "Schönbuchbahn: Ersatzbus" : bad ? `Schönbuchbahn: ${bad}× verspätet/Ausfall` : "Schönbuchbahn pünktlich";
+    if (s1) t += `, Anschluss Stuttgart verspätet`;
+    parts.push(t + ".");
+  }
+  if (verkehr.status === "fulfilled") {
+    const n = (verkehr.value.eintraege || []).filter((x) => x.strasse === "A81" && x.art === "sperrung" && x.km <= 10 && (!x.von || Date.parse(x.von) <= Date.now())).length;
+    parts.push(n ? `A81: ${n} Sperrung${n > 1 ? "en" : ""} bei Böblingen.` : "A81 ohne Sperrungen.");
+  }
+  return { title, body: parts.join(" "), tag: "morgen" };
+}
+
 // Zeitgesteuert (Cron), alle 15 Minuten
-export async function checkAndNotify(env, { lat, lon }, loadVerkehr) {
+export { morningBriefing };
+export async function checkAndNotify(env, { lat, lon }, loadVerkehr, loadBahn) {
   if (!env.PUSH || !env.VAPID_PRIVATE_JWK) return;
   // Beim allerersten Lauf nur merken, was es schon gibt, damit nicht alte Meldungen auf einmal kommen
   const first = !(await env.PUSH.get("init"));
@@ -145,6 +203,20 @@ export async function checkAndNotify(env, { lat, lon }, loadVerkehr) {
       if (await once(env, id, ttl, { title: `Sperrung ${x.titel}`, body: [x.richtung, when].filter(Boolean).join(", "), tag: "a81" }, first)) log.push("a81");
     }
   } catch {}
+
+  // 4. Morgen-Briefing Mo–Fr um 6:30 Uhr, nur an Geräte, die es eingeschaltet haben
+  const wd = fmt(Date.now(), { weekday: "short" });
+  const min = +fmt(Date.now(), { minute: "numeric" });
+  if (!["Sa", "So"].includes(wd) && h === 6 && min >= 30 && min < 45) {
+    try {
+      const msg = await morningBriefing({ lat, lon }, loadVerkehr, loadBahn);
+      if (!(await env.PUSH.get("seen:morning:" + localDay(Date.now())))) {
+        await env.PUSH.put("seen:morning:" + localDay(Date.now()), "1", { expirationTtl: 2 * 86400 });
+        await broadcast(env, msg, (s) => s.morning);
+        log.push("morning");
+      }
+    } catch {}
+  }
 
   if (first) await env.PUSH.put("init", new Date().toISOString());
   return log;

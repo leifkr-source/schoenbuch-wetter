@@ -95,6 +95,11 @@ button{font:inherit;color:inherit}
 .pushbox b{display:block;font-size:.95rem}
 .pushbox span{display:block;font-size:.82rem;color:var(--muted)}
 .pushbtn{flex:none;border:0;border-radius:999px;padding:9px 14px;font:600 .9rem var(--body);background:var(--accent);color:#fff;cursor:pointer}
+.switch{appearance:none;-webkit-appearance:none;flex:none;width:46px;height:28px;border-radius:999px;background:var(--line);position:relative;cursor:pointer;transition:background .2s;margin:0}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .2s}
+.switch:checked{background:var(--accent)}
+.switch:checked::after{transform:translateX(18px)}
+.pushbox.morning{cursor:pointer}
 .pushbtn.off{background:transparent;color:var(--muted);border:1px solid var(--line)}
 .pushbtn:disabled{opacity:.5}
 .ok i{width:10px;height:10px;border-radius:50%;background:var(--accent);flex:none}
@@ -275,6 +280,10 @@ footer a{color:inherit}
       <div><b>Warnungen aufs Handy</b><span id="pushText">Bei Unwetter, Glätte am Morgen und neuen Sperrungen auf der A81.</span></div>
       <button class="pushbtn" id="pushBtn" type="button">Einschalten</button>
     </div>
+    <label class="pushbox morning" id="morningBox" hidden>
+      <div><b>Morgen-Briefing</b><span>Mo–Fr um 6:30 Uhr: Wetter, Schönbuchbahn und A81 in einer Mitteilung</span></div>
+      <input type="checkbox" class="switch" id="morningSwitch">
+    </label>
   </section>
 
   <section class="pollen" aria-labelledby="ph">
@@ -368,17 +377,20 @@ async function getJSON(url){
 }
 function dayKey(d){ return fmtDay.format(d); }
 
+let YESTERDAY = null; // stündliche Werte von gestern, für den Vergleich im Tagessatz
 async function load(){
   const now = new Date();
   const start = dayKey(now);
   const end = dayKey(new Date(now.getTime()+8*864e5));
   const q = `lat=${LAT}&lon=${LON}&tz=${TZ}`;
-  const [cur, wx, al, rd] = await Promise.allSettled([
+  const [cur, wx, al, rd, yd] = await Promise.allSettled([
     getJSON(`${API}/current_weather?${q}`),
     getJSON(`${API}/weather?${q}&date=${start}&last_date=${end}`),
     getJSON(`${API}/alerts?lat=${LAT}&lon=${LON}`),
-    getJSON(`${API}/radar?${q}&distance=20000&format=plain`)
+    getJSON(`${API}/radar?${q}&distance=20000&format=plain`),
+    getJSON(`${API}/weather?${q}&date=${dayKey(new Date(now.getTime()-864e5))}&last_date=${start}`)
   ]);
+  YESTERDAY = yd.status==="fulfilled" ? yd.value.weather : null;
   const demo = wx.status!=="fulfilled";
   $("demo").hidden = !demo;
   const hourly = demo ? demoHourly(now) : wx.value.weather;
@@ -652,10 +664,23 @@ function renderSummary(h, now){
   const hi = Math.max(...list.map(x=>x.temperature).filter(v=>v!=null));
   const gust = Math.max(0, ...list.map(x=>x.wind_gust_speed||0));
   let out = (evening ? "Morgen: " : "") + s + ". ";
-  out += `Höchstens ${r0(hi)} °C.`;
+  out += `Höchstens ${r0(hi)} °C.` + compareDay(h, now, evening);
   if(gust >= 50) out += ` Böen bis ${r0(gust)} km/h.`;
   $("summary").textContent = out;
   renderOutWindow(h, now, evening);
+}
+
+/* Vergleich mit dem Vortag: tagsüber heute ↔ gestern, abends morgen ↔ heute (Höchstwerte 7–21 Uhr) */
+function compareDay(h, now, evening){
+  const ref = evening ? h : YESTERDAY;
+  if(!ref) return "";
+  const dayMax = (list, key) => { const v = list.filter(x=>{ const t=new Date(x.timestamp), hh=hourOf(t); return dayKey(t)===key && hh>=7 && hh<=21; }).map(x=>x.temperature).filter(v=>v!=null); return v.length >= 6 ? Math.max(...v) : null; };
+  const a = dayMax(h, dayKey(new Date(now.getTime() + (evening ? 864e5 : 0))));   // Tag, um den es im Satz geht
+  const b = dayMax(ref, dayKey(new Date(now.getTime() - (evening ? 0 : 864e5)))); // Vortag
+  if(a==null || b==null) return "";
+  const diff = Math.round(a - b), than = evening ? "heute" : "gestern";
+  if(Math.abs(diff) < 2) return ` Ähnlich warm wie ${than}.`;
+  return ` Tagsüber ${Math.abs(diff)} Grad ${diff>0?"wärmer":"kälter"} als ${than}.`;
 }
 
 /* „Wann bleibe ich trocken?“: längstes trockenes Zeitfenster bei Tageslicht (7–21 Uhr) */
@@ -920,7 +945,23 @@ async function initPush(){
     return;
   }
   let sub = await reg.pushManager.getSubscription();
+  const prefs = async (body) => {
+    const r = await fetch(`${BACKEND}/push/prefs`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({endpoint:sub.endpoint, ...body})});
+    return r.ok ? r.json() : null;
+  };
+  const sw = $("morningSwitch");
+  sw.onchange = async () => {
+    sw.disabled = true;
+    const r = await prefs({morning: sw.checked}).catch(()=>null);
+    if(!r) sw.checked = !sw.checked; // zurückstellen, wenn es nicht geklappt hat
+    sw.disabled = false;
+  };
+  const showMorning = async () => {
+    $("morningBox").hidden = !sub;
+    if(sub){ const r = await prefs({}).catch(()=>null); sw.checked = !!(r && r.morning); }
+  };
   const show = () => {
+    showMorning();
     btn.textContent = sub ? "Ausschalten" : "Einschalten";
     btn.classList.toggle("off", !!sub);
     txt.textContent = sub ? "Ist an: Unwetter, Glätte am Morgen, neue Sperrungen auf der A81."

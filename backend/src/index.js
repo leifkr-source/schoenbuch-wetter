@@ -274,6 +274,6 @@ export default {
 
   // Alle 15 Minuten: neue Warnungen als Push-Mitteilung verschicken
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(checkAndNotify(env, HOME, loadVerkehr));
+    ctx.waitUntil(checkAndNotify(env, HOME, loadVerkehr, loadBahn));
   },
 };
