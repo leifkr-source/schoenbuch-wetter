@@ -190,6 +190,19 @@ button{font:inherit;color:inherit}
 .tlegend .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
 .tlegend .dot.sperrung{background:var(--danger)} .tlegend .dot.baustelle{background:var(--warn)}
 .tlegend .pnote{margin-left:auto;font-size:.78rem}
+.train{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tdir{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.tdir b{display:block;font-size:.8rem;color:var(--muted);font-weight:600;margin-bottom:4px}
+.tdep{display:flex;justify-content:space-between;align-items:baseline;gap:6px;padding:3px 0;font-variant-numeric:tabular-nums}
+.tdep .tt{font-weight:700;font-size:1.05rem}
+.tdep .tt s{color:var(--muted);font-weight:400;font-size:.85rem;margin-right:4px}
+.tdep small{font-size:.78rem;color:var(--muted);white-space:nowrap}
+.tdep .late{color:var(--danger);font-weight:700}
+.tdep .gone{color:var(--danger);font-weight:700;text-decoration:line-through}
+.sev{display:inline-block;font-size:.72rem;font-weight:700;background:var(--warn-bg);color:var(--warn-ink);border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:1px}
+.tinfo{background:var(--warn-bg);color:var(--warn-ink);border-radius:12px;padding:10px 12px;margin-top:10px;font-size:.88rem}
+.around .tinfo summary{cursor:pointer;font-weight:700;color:inherit;padding:0}
+.tinfo p{margin:6px 0 0;white-space:pre-line}
 .troad{border-bottom:1px solid var(--line)}
 .around .troad summary{display:block;list-style:none;cursor:pointer;padding:12px 0;color:var(--fg);font-weight:400;font-size:1rem;-webkit-tap-highlight-color:transparent}
 .around .troad summary::-webkit-details-marker{display:none}
@@ -279,6 +292,7 @@ footer a{color:inherit}
 
   <section class="around" aria-labelledby="ah">
     <h2 id="ah">Rund um Holzgerlingen</h2>
+    <div id="aroundTrain" hidden></div>
     <div id="aroundTraffic"><h3>Straßen</h3><p class="pnote">Wird geladen …</p></div>
     <div id="aroundTown" hidden></div>
     <div id="aroundPolice" hidden></div>
@@ -367,7 +381,7 @@ async function load(){
   loadAround();
   renderAlerts(al.status==="fulfilled" ? al.value.alerts : (demo ? demoAlerts(now) : null));
   initRadar(rd.status==="fulfilled" ? rd.value : demoRadar(now), rd.status!=="fulfilled");
-  $("stamp").textContent = (demo ? "Beispiel · " : "Stand ") + fmtT.format(current.timestamp ? new Date(current.timestamp) : now) + " Uhr";
+  $("stamp").textContent = (demo ? "Beispiel · " : navigator.onLine ? "Stand " : "Offline · Stand ") + fmtT.format(current.timestamp ? new Date(current.timestamp) : now) + " Uhr";
 }
 
 /* ---------- Jetzt ---------- */
@@ -690,7 +704,11 @@ const fmtDateY = new Intl.DateTimeFormat("de-DE",{day:"numeric",month:"short",ye
 const shortDate = d => (d.getFullYear()===new Date().getFullYear() ? fmtDate : fmtDateY).format(d);
 const ART = {sperrung:"Sperrung", warnung:"Verkehrsmeldung", baustelle:"Baustelle"};
 const MAYOR_WA = "https://whatsapp.com/channel/0029Vb9IFl9Jpe8YdvGkKt47";
+let trainTimer = null;
 function loadAround(){
+  loadTrain();
+  clearInterval(trainTimer);
+  trainTimer = setInterval(()=>{ if(!document.hidden) loadTrain(); }, 60e3); // Abfahrten jede Minute auffrischen
   getJSON(`${BACKEND}/verkehr`).then(renderTraffic).catch(()=>{
     $("aroundTraffic").innerHTML = `<h3>Straßen</h3><p class="pnote">Verkehrsmeldungen konnten gerade nicht geladen werden.</p>`;
   });
@@ -698,6 +716,33 @@ function loadAround(){
   $("aroundTown").innerHTML = `<h3>Aus dem Rathaus</h3><ul class="alist"><li><i class="dot"></i><div><a href="${MAYOR_WA}" target="_blank" rel="noopener"><b>Bürgermeister Delakos auf WhatsApp</b></a><small>Aktuelle Infos direkt aus dem Rathaus</small></div></li></ul>`;
   $("aroundTown").hidden = false;
   if(SHOW_POLICE) getJSON(`${BACKEND}/polizei`).then(d=>renderLinks("aroundPolice","Polizei",d.eintraege.slice(0,3),"Quelle: Polizeipräsidium Ludwigsburg, presseportal.de")).catch(()=>{});
+}
+
+/* Schönbuchbahn: nächste Abfahrten ab Holzgerlingen Bahnhof (VVS, Echtzeit); vor öffentlichem Start Nutzung mit VVS klären */
+function loadTrain(){
+  getJSON(`${BACKEND}/bahn`).then(renderTrain).catch(()=>{});
+}
+function renderTrain(d){
+  const deps = d.abfahrten || [];
+  if(!deps.length) return;
+  const now = Date.now();
+  const dep = a => {
+    const t = new Date(a.echt || a.plan), mins = Math.round((t - now)/6e4);
+    const late = a.verspaetung > 0 ? `<span class="late">+${a.verspaetung}</span>` : "";
+    const time = a.verspaetung > 0 ? `<s>${fmtT.format(new Date(a.plan))}</s>${fmtT.format(t)}` : fmtT.format(t);
+    const rel = a.ausfall ? `<span class="gone">fällt aus</span>` : mins <= 0 ? "jetzt" : mins < 60 ? `in ${mins} min` : "";
+    return `<div class="tdep"><span class="tt">${time}</span><small>${late} ${rel}</small></div>`;
+  };
+  const col = ziel => {
+    const list = deps.filter(a=>a.ziel.startsWith(ziel)).slice(0,3);
+    return list.length ? `<div class="tdir"><b>→ ${ziel}</b>${list.map(dep).join("")}</div>` : "";
+  };
+  const sev = deps.some(a=>a.ersatz);
+  let h = `<h3>Schönbuchbahn${sev?'<span class="sev">Ersatzbus</span>':""}</h3><div class="train">${col("Böblingen")}${col("Dettenhausen")}</div>`;
+  for(const i of d.hinweise||[]) h += `<details class="tinfo"><summary>${esc(i.titel)}</summary><p>${esc(i.text)}</p></details>`;
+  h += `<p class="pnote">Ab Holzgerlingen Bahnhof · Echtzeit: VVS</p>`;
+  $("aroundTrain").innerHTML = h;
+  $("aroundTrain").hidden = false;
 }
 
 /* Verkehr: kleine Karte (24 × 24 km) und Liste nach Straßen */
@@ -794,7 +839,9 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 async function initPush(){
   const box = $("pushbox"), btn = $("pushBtn"), txt = $("pushText");
-  const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  // Service Worker immer registrieren: schneller Start und letzte Daten auch offline
+  const reg = "serviceWorker" in navigator ? await navigator.serviceWorker.register("sw.js") : null;
+  const supported = reg && "PushManager" in window && "Notification" in window;
   if(!supported){
     if(isIOS && !standalone){
       txt.textContent = "Leg die Seite zuerst auf den Home-Bildschirm (Teilen → Zum Home-Bildschirm) und öffne sie von dort.";
@@ -802,7 +849,6 @@ async function initPush(){
     }
     return;
   }
-  const reg = await navigator.serviceWorker.register("sw.js");
   let sub = await reg.pushManager.getSubscription();
   const show = () => {
     btn.textContent = sub ? "Ausschalten" : "Einschalten";

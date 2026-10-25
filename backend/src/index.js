@@ -17,6 +17,8 @@ const ROUTES = {
   "/stadt": { maxAge: 3600, load: loadStadt },
   // Polizeimeldungen für Holzgerlingen aus dem Presseportal (nur Überschrift und Link)
   "/polizei": { maxAge: 900, load: loadPolizei },
+  // Schönbuchbahn ab Holzgerlingen Bahnhof, Echtzeit vom VVS (EFA)
+  "/bahn": { maxAge: 60, load: loadBahn },
 };
 
 const CORS = {
@@ -184,6 +186,37 @@ async function loadPolizei() {
     });
   }
   return { stand: new Date().toISOString(), quelle: "Polizeipräsidium Ludwigsburg via presseportal.de", eintraege: list.slice(0, 6) };
+}
+
+/* ---------- Schönbuchbahn (VVS) ---------- */
+async function loadBahn() {
+  const stop = "de:08115:4193"; // Holzgerlingen Bahnhof
+  const d = await get(`https://www3.vvs.de/mngvvs/XML_DM_REQUEST?outputFormat=rapidJSON&type_dm=any&name_dm=${stop}&mode=direct&useRealtime=1&limitDeparture=30&SpEncId=0`);
+  const now = Date.now();
+  const abfahrten = [], infos = new Map();
+  for (const e of d.stopEvents || []) {
+    const t = e.transportation || {};
+    // Nur Schönbuchbahn (RB46) und ihr Ersatzverkehr (R46E)
+    if (!/^(RB)?46|^R46/.test(t.number || t.disassembledName || "")) continue;
+    const plan = e.departureTimePlanned, est = e.departureTimeEstimated || null;
+    const when = Date.parse(est || plan);
+    if (when < now - 60e3) continue;
+    abfahrten.push({
+      linie: t.number,
+      ersatz: /SEV|Bus/i.test(t.product?.name || "") || /E$/.test(t.number || ""),
+      ziel: (t.destination?.name || "").replace(/\s+(Bf|Bahnhof|ZOB)$/, ""),
+      plan,
+      echt: est,
+      verspaetung: est ? Math.round((Date.parse(est) - Date.parse(plan)) / 60e3) : null,
+      ausfall: !!e.isCancelled || (e.realtimeStatus || []).includes("TRIP_CANCELLED"),
+      gleis: e.location?.properties?.platform || "",
+    });
+    for (const i of e.infos || []) {
+      const l = i.infoLinks?.[0];
+      if (l && !infos.has(i.id)) infos.set(i.id, { titel: l.subtitle || l.urlText || l.title, text: (l.content || "").trim() });
+    }
+  }
+  return { stand: new Date().toISOString(), quelle: "VVS", abfahrten: abfahrten.slice(0, 12), hinweise: [...infos.values()].slice(0, 3) };
 }
 
 function decode(s) {
