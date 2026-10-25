@@ -1,0 +1,15 @@
+# Persönliches, nicht hochladen
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Geheimnisse (API-Schlüssel)
+.env*
+
+# macOS
+.DS_Store
+
+# Abhängigkeiten
+node_modules/
+
+# Projektgedächtnis für Claude, vorerst nur lokal
+CLAUDE.md
