@@ -32,6 +32,7 @@
   }
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0}
 body{background:var(--bg);color:var(--fg);font:16px/1.5 var(--body);-webkit-font-smoothing:antialiased;
   padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -60,6 +61,7 @@ button{font:inherit;color:inherit}
 .cond{grid-column:1/-1;font-size:1.15rem}
 .facts{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:.9rem}
 .facts b{color:var(--fg);font-weight:700}
+.facts span{white-space:nowrap}
 
 /* Nowcast */
 .nowcast{display:flex;gap:12px;align-items:center;font-size:1.05rem;font-weight:700;
@@ -294,10 +296,10 @@ function renderNow(c){
   $("cond").textContent = COND[c.icon] || "–";
   const wind = c.wind_speed_10 ?? c.wind_speed, gust = c.wind_gust_speed_10 ?? c.wind_gust_speed;
   $("facts").innerHTML = [
-    `Wind <b>${r0(wind)} km/h</b>`,
-    gust!=null ? `Böen <b>${r0(gust)} km/h</b>` : "",
-    c.relative_humidity!=null ? `Feuchte <b>${r0(c.relative_humidity)} %</b>` : "",
-    c.cloud_cover!=null ? `Wolken <b>${r0(c.cloud_cover)} %</b>` : ""
+    `<span>Wind <b>${r0(wind)} km/h</b></span>`,
+    gust!=null ? `<span>Böen <b>${r0(gust)} km/h</b></span>` : "",
+    c.relative_humidity!=null ? `<span>Feuchte <b>${r0(c.relative_humidity)} %</b></span>` : "",
+    c.cloud_cover!=null ? `<span>Wolken <b>${r0(c.cloud_cover)} %</b></span>` : ""
   ].filter(Boolean).join("");
 }
 function synthCurrent(h, now){
@@ -456,7 +458,7 @@ function renderSummary(h, now){
     s = "Trocken" + (clear > .6 ? " und oft sonnig" : (clear < .2 ? ", aber meist grau" : ""));
   } else if(firstWet === 0){
     const dry = list.findIndex(x=>!wet(x));
-    s = dry === -1 ? "Nass bis zum Abend, Schirm einpacken" : `Regen bis etwa ${uhr(list[dry])}, danach trocken`;
+    s = dry === -1 ? "Regnerisch bis zum Abend, Schirm einpacken" : `Regnerisch bis etwa ${uhr(list[dry])}, danach trocken`;
   } else {
     s = `Trocken bis ${uhr(list[firstWet])}, danach Schirm mitnehmen`;
   }
