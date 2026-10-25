@@ -113,6 +113,28 @@ button{font:inherit;color:inherit}
 .d .vals .lo{color:var(--muted)}
 .d .meta{grid-column:3/-1;font-size:.78rem;color:var(--muted);margin-top:-8px}
 
+/* Tagessatz */
+.summary{font-family:var(--display);font-size:1.3rem;line-height:1.35;font-weight:600;margin:0;text-wrap:balance}
+.summary:empty{display:none}
+
+/* Auto-Check */
+.car{display:flex;gap:14px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.car svg{width:30px;height:30px;flex:none;color:var(--rain)}
+.car.ice svg{color:var(--danger)}
+.car b{display:block}
+.car span{font-size:.92rem;color:var(--muted)}
+
+/* Pollen */
+.pollen{display:flex;flex-direction:column;gap:10px}
+.prow{display:grid;grid-template-columns:7.5em 1fr 4.5em;gap:12px;align-items:center;font-size:.92rem}
+.plevel{display:flex;gap:3px}
+.plevel i{height:8px;flex:1;border-radius:2px;background:var(--line)}
+.plevel i.on{background:var(--accent)}
+.plevel.hi i.on{background:var(--warn)}
+.plevel.top i.on{background:var(--danger)}
+.ptxt{color:var(--muted);font-size:.8rem;text-align:right}
+.pnote{color:var(--muted);font-size:.85rem;margin:0}
+
 footer{font-size:.8rem;color:var(--muted);line-height:1.6}
 footer a{color:inherit}
 @media (prefers-reduced-motion: reduce){*{scroll-behavior:auto}}
@@ -127,6 +149,8 @@ footer a{color:inherit}
 
   <div class="demo" id="demo" hidden>Live-Daten konnten nicht geladen werden. Du siehst Beispieldaten, damit das Layout sichtbar ist.</div>
 
+  <p class="summary" id="summary"></p>
+
   <section class="hero" aria-label="Aktuelles Wetter">
     <div class="temp num" id="temp">–<sup>°</sup></div>
     <div class="icon" id="nowIcon"></div>
@@ -139,9 +163,19 @@ footer a{color:inherit}
     <div id="nowcastText">Regenradar wird geladen …</div>
   </div>
 
+  <div class="car" id="car" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v20M4.9 4.9l14.2 14.2M2 12h20M4.9 19.1L19.1 4.9"/><path d="M9 3l3 2 3-2M9 21l3-2 3 2M3 9l2 3-2 3M21 9l-2 3 2 3"/></svg>
+    <div id="carText"></div>
+  </div>
+
   <section class="warns" aria-labelledby="wh">
     <h2 id="wh">Warnungen vom DWD</h2>
     <div id="warns"><div class="ok"><i></i>Wird geladen …</div></div>
+  </section>
+
+  <section class="pollen" aria-labelledby="ph">
+    <h2 id="ph">Pollenflug</h2>
+    <div id="pollen"><p class="pnote">Wird geladen …</p></div>
   </section>
 
   <section class="radar" aria-labelledby="rh">
@@ -175,7 +209,9 @@ const LAT = 48.6386, LON = 9.0117, TZ = "Europe/Berlin";
 const API = "https://api.brightsky.dev";
 const $ = id => document.getElementById(id);
 const fmtT = new Intl.DateTimeFormat("de-DE",{hour:"2-digit",minute:"2-digit",timeZone:TZ});
-const fmtH = new Intl.DateTimeFormat("de-DE",{hour:"2-digit",timeZone:TZ});
+const fmtH = new Intl.DateTimeFormat("de-DE",{hour:"numeric",hourCycle:"h23",timeZone:TZ});
+const hourOf = d => +fmtH.formatToParts(d).find(p=>p.type==="hour").value;
+const hLabel = d => String(hourOf(d)).padStart(2,"0") + " Uhr";
 const fmtD = new Intl.DateTimeFormat("de-DE",{weekday:"short",timeZone:TZ});
 const fmtDay = new Intl.DateTimeFormat("en-CA",{year:"numeric",month:"2-digit",day:"2-digit",timeZone:TZ});
 const fmtFull = new Intl.DateTimeFormat("de-DE",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit",timeZone:TZ});
@@ -242,6 +278,9 @@ async function load(){
   renderNow(current);
   renderHours(hourly, now);
   renderDays(hourly, now);
+  renderSummary(hourly, now);
+  renderCar(hourly, now);
+  loadPollen();
   renderAlerts(al.status==="fulfilled" ? al.value.alerts : (demo ? demoAlerts(now) : null));
   initRadar(rd.status==="fulfilled" ? rd.value : demoRadar(now), rd.status!=="fulfilled");
   $("stamp").textContent = (demo ? "Beispiel · " : "Stand ") + fmtT.format(current.timestamp ? new Date(current.timestamp) : now) + " Uhr";
@@ -274,7 +313,7 @@ function renderHours(h, now){
   $("hours").innerHTML = list.map((x,i)=>{
     const p = x.precipitation||0, pp = x.precipitation_probability;
     return `<div class="h${i===0?" now":""}">
-      <span class="t">${i===0?"Jetzt":fmtH.format(new Date(x.timestamp))+" Uhr"}</span>
+      <span class="t">${i===0?"Jetzt":hLabel(new Date(x.timestamp))}</span>
       ${icon(x.icon)}
       <span class="tc">${r0(x.temperature)}°</span>
       <span class="bar" title="${r1(p)} mm"><i style="height:${Math.round(p/maxP*100)}%"></i></span>
@@ -289,7 +328,7 @@ function renderDays(h, now){
   for(const x of h){ const k = dayKey(new Date(x.timestamp)); (by.get(k)||by.set(k,[]).get(k)).push(x); }
   const days = [...by.entries()].filter(([k])=>k>=dayKey(now)).slice(0,7).map(([k,arr])=>{
     const temps = arr.map(x=>x.temperature).filter(v=>v!=null);
-    const day = arr.filter(x=>{const hh=+fmtH.format(new Date(x.timestamp));return hh>=8&&hh<=19;});
+    const day = arr.filter(x=>{const hh=hourOf(new Date(x.timestamp));return hh>=8&&hh<=19;});
     const ic = mode((day.length?day:arr).map(x=>x.icon).map(i=>i&&i.replace("-night","-day")));
     return {k, date:new Date(arr[Math.floor(arr.length/2)].timestamp), lo:Math.min(...temps), hi:Math.max(...temps),
       rain:arr.reduce((s,x)=>s+(x.precipitation||0),0), gust:Math.max(0,...arr.map(x=>x.wind_gust_speed||0)), ic};
@@ -396,6 +435,93 @@ function nowcast(now){
     else txt = `Kein Regen in Sicht<span>Laut Radar-Nowcast trocken für die nächsten ${horizon>0?horizon:120} Minuten</span>`;
   }
   $("nowcastText").innerHTML = txt + (R.demo?'<span>(Beispieldaten)</span>':"");
+}
+
+/* ---------- Heute in einem Satz ---------- */
+function renderSummary(h, now){
+  const evening = hourOf(now) >= 18;
+  const target = evening ? dayKey(new Date(now.getTime()+864e5)) : dayKey(now);
+  const list = h.filter(x=>{
+    const t = new Date(x.timestamp), hh = hourOf(t);
+    if(dayKey(t)!==target) return false;
+    return evening ? hh>=6 && hh<=22 : t.getTime() >= now.getTime()-36e5;
+  });
+  if(!list.length) return;
+  const wet = x => (x.precipitation||0) >= 0.1 || (x.precipitation_probability||0) >= 60;
+  const uhr = x => hourOf(new Date(x.timestamp)) + " Uhr";
+  const firstWet = list.findIndex(wet);
+  let s;
+  if(firstWet === -1){
+    const clear = list.filter(x=>/clear|partly/.test(x.icon||"")).length / list.length;
+    s = "Trocken" + (clear > .6 ? " und oft sonnig" : (clear < .2 ? ", aber meist grau" : ""));
+  } else if(firstWet === 0){
+    const dry = list.findIndex(x=>!wet(x));
+    s = dry === -1 ? "Nass bis zum Abend, Schirm einpacken" : `Regen bis etwa ${uhr(list[dry])}, danach trocken`;
+  } else {
+    s = `Trocken bis ${uhr(list[firstWet])}, danach Schirm mitnehmen`;
+  }
+  const hi = Math.max(...list.map(x=>x.temperature).filter(v=>v!=null));
+  const gust = Math.max(0, ...list.map(x=>x.wind_gust_speed||0));
+  let out = (evening ? "Morgen: " : "") + s + ". ";
+  out += `Höchstens ${r0(hi)} °C.`;
+  if(gust >= 50) out += ` Böen bis ${r0(gust)} km/h.`;
+  $("summary").textContent = out;
+}
+
+/* ---------- Morgen-Check fürs Auto ---------- */
+function renderCar(h, now){
+  const today = hourOf(now) < 8;
+  const key = dayKey(today ? now : new Date(now.getTime()+864e5));
+  const morning = h.filter(x=>{ const t=new Date(x.timestamp), hh=hourOf(t); return dayKey(t)===key && hh>=5 && hh<=8; });
+  if(!morning.length) return;
+  const startT = new Date(morning[0].timestamp).getTime();
+  const night = h.filter(x=>{ const t=new Date(x.timestamp).getTime(); return t>=startT-6*36e5 && t<startT; });
+  const minT = Math.min(...morning.map(x=>x.temperature));
+  const nightRain = night.reduce((s,x)=>s+(x.precipitation||0),0);
+  const clearSky = morning.concat(night).reduce((s,x)=>s+(x.cloud_cover??100),0) / (morning.length+night.length) < 35;
+  const when = today ? "Heute früh" : "Morgen früh";
+  let head, text, ice = false;
+  if(minT <= 0.5 && nightRain >= 0.1){
+    ice = true; head = `Glättegefahr: ${when} ${r0(minT)} °C`;
+    text = "Nach Niederschlag in der Nacht können Straßen und Scheiben vereist sein. Mehr Zeit einplanen und vorsichtig fahren.";
+  } else if(minT <= 0.5){
+    ice = true; head = `Scheibe kratzen: ${when} ${r0(minT)} °C`;
+    text = "Plan fünf Minuten extra ein, oder leg abends eine Abdeckung auf die Frontscheibe.";
+  } else if(minT <= 3 && clearSky){
+    head = `${when} ${r0(minT)} °C bei klarem Himmel`;
+    text = "Auch knapp über null kann sich Reif auf der Scheibe bilden. Kratzer griffbereit halten.";
+  } else return;
+  $("car").classList.toggle("ice", ice);
+  $("carText").innerHTML = `<b>${head}</b><span>${text}</span>`;
+  $("car").hidden = false;
+}
+
+/* ---------- Pollenflug (DWD) ---------- */
+const POLLEN_URL = "https://opendata.dwd.de/climate_environment/health/alerts/s31fg.json";
+const P_LEVEL = {"0":[0,"keine"],"0-1":[1,"gering"],"1":[2,"gering"],"1-2":[3,"gering–mittel"],"2":[4,"mittel"],"2-3":[5,"mittel–hoch"],"3":[6,"hoch"]};
+async function loadPollen(){
+  const el = $("pollen");
+  try{
+    const d = await getJSON(POLLEN_URL);
+    // Teilregion „Hohenlohe/mittlerer Neckar/Oberschwaben“ (Kreis Böblingen), sonst erste Teilregion in BW
+    const bw = (d.content||[]).filter(r=>/Baden-W/i.test(r.region_name||""));
+    const reg = bw.find(r=>/mittlerer Neckar/i.test(r.partregion_name||"")) || bw[0];
+    if(!reg) throw new Error("Region fehlt");
+    const rows = Object.entries(reg.Pollen||{})
+      .map(([name,v])=>({name, today:P_LEVEL[v.today], tomorrow:P_LEVEL[v.tomorrow]}))
+      .filter(p=>p.today && (p.today[0]>0 || (p.tomorrow&&p.tomorrow[0]>0)))
+      .sort((a,b)=>b.today[0]-a.today[0]);
+    if(!rows.length){ el.innerHTML = `<p class="pnote">Aktuell keine nennenswerte Pollenbelastung in der Region.</p>`; return; }
+    el.innerHTML = rows.map(p=>{
+      const lv = p.today[0], cls = lv>=5 ? "top" : lv>=3 ? "hi" : "";
+      const trend = p.tomorrow ? (p.tomorrow[0]>lv ? "morgen mehr" : p.tomorrow[0]<lv ? "morgen weniger" : "") : "";
+      return `<div class="prow"><span>${esc(p.name)}</span>
+        <span class="plevel ${cls}" title="${p.today[1]}">${[1,2,3,4,5,6].map(i=>`<i class="${i<=lv?"on":""}"></i>`).join("")}</span>
+        <span class="ptxt">${p.today[1]}${trend?"<br>"+trend:""}</span></div>`;
+    }).join("") + `<p class="pnote">Region ${esc(reg.partregion_name||reg.region_name)}, Vorhersage des DWD.</p>`;
+  }catch(e){
+    el.innerHTML = `<p class="pnote">Pollendaten konnten gerade nicht geladen werden.</p>`;
+  }
 }
 
 /* ---------- Beispieldaten, nur falls der Abruf scheitert ---------- */
