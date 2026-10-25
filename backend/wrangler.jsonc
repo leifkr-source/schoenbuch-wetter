@@ -2,5 +2,10 @@
   // Einstellungen für Cloudflare Workers (wrangler)
   "name": "api",
   "main": "src/index.js",
-  "compatibility_date": "2026-10-01"
+  "compatibility_date": "2026-10-01",
+  // Speicher für Push-Anmeldungen und bereits verschickte Warnungen
+  "kv_namespaces": [{ "binding": "PUSH", "id": "58280670283d4ba4a85239b5c7cbe870" }],
+  // Alle 15 Minuten nach neuen Warnungen schauen
+  "triggers": { "crons": ["*/15 * * * *"] }
+  // Geheimnis VAPID_PRIVATE_JWK wird mit „npx wrangler secret put VAPID_PRIVATE_JWK“ gesetzt
 }

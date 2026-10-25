@@ -16,3 +16,4 @@ CLAUDE.md
 
 # Lokale Dateien von wrangler (Cloudflare)
 .wrangler/
+.dev.vars*

@@ -3,6 +3,8 @@
 // oder erst aufbereitet werden müssen, speichert sie kurz zwischen (für alle Nutzer
 // gemeinsam) und gibt sie als JSON an die Webseite weiter.
 
+import { handlePush, checkAndNotify } from "./push.js";
+
 const HOME = { lat: 48.6386, lon: 9.0117 }; // Holzgerlingen
 const UA = { "User-Agent": "schoenbuch-wetter (https://github.com/leifkr-source/schoenbuch-wetter)" };
 
@@ -193,10 +195,12 @@ function decode(s) {
 
 export default {
   async fetch(request, env, ctx) {
+    const { pathname } = new URL(request.url);
+    if (pathname.startsWith("/push/")) return handlePush(request, env, pathname);
+
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     if (request.method !== "GET") return json({ error: "Nur GET erlaubt" }, 405);
 
-    const { pathname } = new URL(request.url);
     if (pathname === "/") return json({ name: "Schönbuch Wetter API", endpoints: Object.keys(ROUTES) });
 
     const route = ROUTES[pathname];
@@ -218,5 +222,10 @@ export default {
     const res = json(body, 200, { "Cache-Control": `public, max-age=${route.maxAge}` });
     ctx.waitUntil(cache.put(key, res.clone()));
     return res;
+  },
+
+  // Alle 15 Minuten: neue Warnungen als Push-Mitteilung verschicken
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(checkAndNotify(env, HOME, loadVerkehr));
   },
 };

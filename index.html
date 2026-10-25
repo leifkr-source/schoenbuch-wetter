@@ -7,6 +7,8 @@
 <title>Schönbuch Wetter</title>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-title" content="Schönbuch">
 <style>
 /* Layout: eine Spalte wie eine App, Karten nur für Warnung und Radar; Daten in Tabellenziffern */
 :root{
@@ -21,6 +23,7 @@
   --warn-ink:#3b2e00;
   --warn-bg:#fff4c7;
   --danger:#c2410c;
+  --map-forest:#d3e3cf; --map-road:#c9cfc8; --map-major:#b3bab2; --map-motorway:#9fb4d6; --map-rail:#a7aea6;
   /* Nur Systemschriften: auf dem iPhone SF Pro, keine Verbindung zu fremden Servern */
   --display:ui-rounded, -apple-system, "SF Pro Rounded", system-ui, "Segoe UI", Roboto, sans-serif;
   --body:-apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -30,6 +33,7 @@
   :root{
     --bg:#0f1613; --surface:#18221d; --fg:#e4ece6; --muted:#93a39a; --line:#2a3832;
     --accent:#7cc5a0; --rain:#6ea8ff; --warn:#f5c518; --warn-ink:#fff4c7; --warn-bg:#3a3010; --danger:#fb923c;
+    --map-forest:#1d2f25; --map-road:#2c3933; --map-major:#3a4a42; --map-motorway:#34507a; --map-rail:#3b4741;
     color-scheme:dark;
   }
 }
@@ -81,6 +85,12 @@ button{font:inherit;color:inherit}
 .warn ul{margin:0;padding-left:20px;font-size:.92rem}
 .warn details summary{cursor:pointer;font-size:.85rem;font-weight:700}
 .ok{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:.95rem}
+.pushbox{display:flex;gap:12px;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.pushbox b{display:block;font-size:.95rem}
+.pushbox span{display:block;font-size:.82rem;color:var(--muted)}
+.pushbtn{flex:none;border:0;border-radius:999px;padding:9px 14px;font:600 .9rem var(--body);background:var(--accent);color:#fff;cursor:pointer}
+.pushbtn.off{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.pushbtn:disabled{opacity:.5}
 .ok i{width:10px;height:10px;border-radius:50%;background:var(--accent);flex:none}
 
 /* Radar */
@@ -120,6 +130,8 @@ button{font:inherit;color:inherit}
 /* Tagessatz */
 .summary{font-family:var(--display);font-size:1.3rem;line-height:1.35;font-weight:600;margin:0;text-wrap:balance}
 .summary:empty{display:none}
+.outwin{margin:-6px 0 0;color:var(--muted);font-size:.95rem}
+.outwin b{color:var(--fg);font-weight:600}
 
 /* Auto-Check */
 .car{display:flex;gap:14px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
@@ -155,30 +167,39 @@ button{font:inherit;color:inherit}
 .alist a:hover{text-decoration:underline}
 .around details summary{cursor:pointer;font-size:.85rem;font-weight:700;color:var(--accent);padding:6px 0}
 .tmap{width:100%;aspect-ratio:1/1;display:block;background:var(--surface);border:1px solid var(--line);border-radius:14px;margin-bottom:8px}
+.tm-base path{fill:none;stroke-linecap:round;stroke-linejoin:round}
+.tm-base .b-forest{fill:var(--map-forest);stroke:none}
+.tm-base .b-secondary{stroke:var(--map-road);stroke-width:1}
+.tm-base .b-primary,.tm-base .b-trunk{stroke:var(--map-major);stroke-width:1.6}
+.tm-base .b-rail{stroke:var(--map-rail);stroke-width:1;stroke-dasharray:3 2}
+.tm-base .b-motorway{stroke:var(--map-motorway);stroke-width:3}
 .tm-ring{fill:none;stroke:var(--line);stroke-width:1;stroke-dasharray:3 5}
-.tm-scale{font-size:9px;fill:var(--muted)}
+.tm-scale{font-size:10px;fill:var(--muted)}
 .tm-place circle{fill:var(--fg)}
 .tm-place.home circle{fill:var(--accent);stroke:var(--surface);stroke-width:2}
-.tm-place text{font-size:10.5px;font-weight:600;fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:3px;stroke-linejoin:round}
-.tmap g[data-road] polyline{fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
+.tm-place text{font-size:12.5px;font-weight:600;fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:3px;stroke-linejoin:round}
+.tmap g[data-road]{cursor:pointer}
+.tmap g[data-road] polyline{fill:none;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
 .tm-sperrung polyline{stroke:var(--danger)} .tm-sperrung circle{fill:var(--danger);stroke:var(--surface);stroke-width:1.5}
 .tm-baustelle polyline,.tm-warnung polyline{stroke:var(--warn)} .tm-baustelle circle,.tm-warnung circle{fill:var(--warn);stroke:var(--surface);stroke-width:1}
 .tmap g[data-road]{transition:opacity .2s}
 .tmap.focus g[data-road]:not(.on){opacity:.15}
+.tmap circle.hit{fill:transparent;stroke:none}
 .tlegend{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:.8rem;color:var(--muted);margin-bottom:4px}
 .tlegend span{display:inline-flex;gap:6px;align-items:center}
 .tlegend .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
 .tlegend .dot.sperrung{background:var(--danger)} .tlegend .dot.baustelle{background:var(--warn)}
 .tlegend .pnote{margin-left:auto;font-size:.78rem}
 .troad{border-bottom:1px solid var(--line)}
-.around .troad summary{list-style:none;display:flex;gap:12px;align-items:center;padding:10px 0;color:var(--fg);font-weight:400;font-size:.92rem}
+.around .troad summary{display:block;list-style:none;cursor:pointer;padding:12px 0;color:var(--fg);font-weight:400;font-size:1rem;-webkit-tap-highlight-color:transparent}
 .around .troad summary::-webkit-details-marker{display:none}
-.troad summary::after{content:"›";margin-left:auto;color:var(--muted);font-size:1.2rem;transition:transform .2s}
-.troad[open] summary::after{transform:rotate(90deg)}
+.trow{display:flex;gap:12px;align-items:center}
+.chev{margin-left:auto;color:var(--muted);font-size:1.4rem;line-height:1;transition:transform .2s}
+.troad[open] .chev{transform:rotate(90deg)}
 .rtxt{display:flex;flex-direction:column;min-width:0}
 .rtxt b{font-weight:600}
-.rtxt small{color:var(--muted);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rbadge{flex:none;min-width:3.4em;text-align:center;font-weight:800;font-size:.8rem;padding:3px 6px;border-radius:5px;letter-spacing:.02em}
+.rtxt small{color:var(--muted);font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rbadge{flex:none;min-width:3.6em;text-align:center;font-weight:800;font-size:.9rem;padding:4px 7px;border-radius:5px;letter-spacing:.02em}
 .rbadge.ra{background:#1d4ed8;color:#fff}
 .rbadge.rb{background:#f4c400;color:#1a1a1a}
 .rbadge.rl{background:#fff;color:#1a1a1a;border:1.5px solid #1a1a1a}
@@ -200,6 +221,7 @@ footer a{color:inherit}
   <div class="demo" id="demo" hidden>Live-Daten konnten nicht geladen werden. Du siehst Beispieldaten, damit das Layout sichtbar ist.</div>
 
   <p class="summary" id="summary"></p>
+  <p class="outwin" id="outwin" hidden></p>
 
   <section class="hero" aria-label="Aktuelles Wetter">
     <div class="temp num" id="temp">–<sup>°</sup></div>
@@ -221,6 +243,10 @@ footer a{color:inherit}
   <section class="warns" aria-labelledby="wh">
     <h2 id="wh">Warnungen vom DWD</h2>
     <div id="warns"><div class="ok"><i></i>Wird geladen …</div></div>
+    <div class="pushbox" id="pushbox" hidden>
+      <div><b>Warnungen aufs Handy</b><span id="pushText">Bei Unwetter, Glätte am Morgen und neuen Sperrungen auf der A81.</span></div>
+      <button class="pushbtn" id="pushBtn" type="button">Einschalten</button>
+    </div>
   </section>
 
   <section class="pollen" aria-labelledby="ph">
@@ -258,7 +284,7 @@ footer a{color:inherit}
     <div id="aroundPolice" hidden></div>
   </section>
 
-  <footer>Daten: Deutscher Wetterdienst (DWD), abgerufen über <a href="https://brightsky.dev" target="_blank" rel="noopener">Bright Sky</a>. Modell- und Stationswerte, Radar-Nowcast bis etwa 2 Stunden. Prototyp, keine amtliche Warnplattform.</footer>
+  <footer>Daten: Deutscher Wetterdienst (DWD), abgerufen über <a href="https://brightsky.dev" target="_blank" rel="noopener">Bright Sky</a>. Modell- und Stationswerte, Radar-Nowcast bis etwa 2 Stunden. Prototyp, keine amtliche Warnplattform. Karte © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap-Mitwirkende</a>.</footer>
 </div>
 
 <script>
@@ -419,6 +445,47 @@ function renderAlerts(list){
 }
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
+/* ---------- Hintergrundkarte (OpenStreetMap, liegt selbst gehostet als basemap.json im Repository) ---------- */
+// Koordinaten in km relativ zu Holzgerlingen (x nach Osten, y nach Norden), erzeugt mit tools/basemap.mjs
+let BASE = null, baseCache = null;
+fetch("basemap.json").then(r=>r.ok?r.json():null).then(b=>{
+  if(!b) return;
+  BASE = b;
+  if(R) drawRadar();
+  if($("tmap")) $("tmap").insertAdjacentHTML("afterbegin", trafficBase());
+}).catch(()=>{});
+const BASE_STYLE = [ // Reihenfolge = Zeichenreihenfolge
+  ["secondary","--map-road",1.2], ["primary","--map-major",1.8], ["trunk","--map-major",2.4],
+  ["rail","--map-rail",1.2,[4,3]], ["motorway","--map-motorway",3.2]
+];
+function radarBase(W, cx, cy, km){
+  if(!BASE) return null;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches, k = [W,cx,cy,km,dark].join();
+  if(baseCache && baseCache.k===k) return baseCache.c;
+  const c = document.createElement("canvas"); c.width = c.height = W;
+  const g = c.getContext("2d"), P = ([x,y]) => [cx + x*km, cy - y*km];
+  g.fillStyle = cssVar("--map-forest");
+  for(const ring of BASE.forest){ g.beginPath(); ring.forEach((p,i)=>{ const [u,v]=P(p); i?g.lineTo(u,v):g.moveTo(u,v); }); g.closePath(); g.fill(); }
+  g.lineCap = g.lineJoin = "round";
+  for(const [cls,col,w,dash] of BASE_STYLE){
+    g.strokeStyle = cssVar(col); g.lineWidth = w*W/600*1.4; g.setLineDash(dash ? dash.map(d=>d*W/600*1.4) : []);
+    g.beginPath();
+    for(const line of BASE.roads[cls]) line.forEach((p,i)=>{ const [u,v]=P(p); i?g.lineTo(u,v):g.moveTo(u,v); });
+    g.stroke();
+  }
+  baseCache = {k, c};
+  return c;
+}
+function trafficBase(){
+  if(!BASE) return "";
+  const S = TMAP.size, s = S/2/TMAP.km, lim = TMAP.km + 1;
+  const inView = l => l.some(([x,y])=>Math.abs(x)<lim && Math.abs(y)<lim);
+  const d = l => "M" + l.map(([x,y])=>`${(S/2+x*s).toFixed(1)} ${(S/2-y*s).toFixed(1)}`).join("L");
+  let h = `<g class="tm-base"><path class="b-forest" d="${BASE.forest.filter(inView).map(r=>d(r)+"Z").join("")}"/>`;
+  for(const [cls] of BASE_STYLE) h += `<path class="b-${cls}" d="${BASE.roads[cls].filter(inView).map(d).join("")}"/>`;
+  return h + "</g>";
+}
+
 /* ---------- Radar ---------- */
 const PLACES = [["Holzgerlingen",48.6386,9.0117,true],["Böblingen",48.6833,9.0167],["Sindelfingen",48.7133,9.0028],
   ["Herrenberg",48.5967,8.8706],["Tübingen",48.5216,9.0576],["Weil im Schönbuch",48.6214,9.0636],["Ehningen",48.6589,8.9411],["Waldenbuch",48.6375,9.1311]];
@@ -450,10 +517,12 @@ function drawRadar(){
   const grid = f.precipitation_5, cell = W/Math.max(R.rows,R.cols);
   ctx.clearRect(0,0,W,W);
   ctx.fillStyle = cssVar("--surface"); ctx.fillRect(0,0,W,W);
+  const base = radarBase(W, R.pos.x*cell, R.pos.y*cell, cell);
+  if(base) ctx.drawImage(base,0,0);
   const img = ctx.createImageData(R.cols, R.rows);
   for(let y=0;y<R.rows;y++) for(let x=0;x<R.cols;x++){
     const col = rainColor(grid[y][x]*0.01*12), i=(y*R.cols+x)*4;
-    if(col){ img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=200; }
+    if(col){ img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=170; }
   }
   const off = document.createElement("canvas"); off.width=R.cols; off.height=R.rows; off.getContext("2d").putImageData(img,0,0);
   ctx.imageSmoothingEnabled = true; ctx.drawImage(off,0,0,R.cols*cell,R.rows*cell);
@@ -524,6 +593,36 @@ function renderSummary(h, now){
   out += `Höchstens ${r0(hi)} °C.`;
   if(gust >= 50) out += ` Böen bis ${r0(gust)} km/h.`;
   $("summary").textContent = out;
+  renderOutWindow(h, now, evening);
+}
+
+/* „Wann bleibe ich trocken?“: längstes trockenes Zeitfenster bei Tageslicht (7–21 Uhr) */
+function renderOutWindow(h, now, evening){
+  const target = evening ? dayKey(new Date(now.getTime()+864e5)) : dayKey(now);
+  const hrs = h.filter(x=>{
+    const t = new Date(x.timestamp), hh = hourOf(t);
+    return dayKey(t)===target && hh>=7 && hh<21 && t.getTime() >= now.getTime()-36e5;
+  });
+  if(hrs.length < 2){ $("outwin").hidden = true; return; }
+  const ok = x => (x.precipitation||0) < 0.1 && (x.precipitation_probability??0) < 40 && (x.wind_gust_speed||0) < 45;
+  let best = null, cur = null;
+  hrs.forEach((x,i)=>{
+    if(ok(x)){ cur = cur ? {...cur, end:i} : {start:i, end:i}; if(!best || cur.end-cur.start > best.end-best.start) best = cur; }
+    else cur = null;
+  });
+  const day = evening ? "Morgen" : "Heute";
+  let txt;
+  if(!best){ txt = `${day} kein trockenes Zeitfenster draußen.`; }
+  else {
+    const n = best.end - best.start + 1, sl = hrs.slice(best.start, best.end+1);
+    const from = hourOf(new Date(sl[0].timestamp)), to = hourOf(new Date(sl[sl.length-1].timestamp)) + 1;
+    const t = Math.max(...sl.map(x=>x.temperature??-99));
+    if(n === hrs.length) txt = `<b>Trocken bis zum Abend</b>, gut für Rad und Laufen (bis ${r0(t)} °C).`;
+    else if(n === 1) txt = `Nur kurz trocken: <b>${from}–${to} Uhr</b>.`;
+    else txt = `Draußen trocken: <b>${from}–${to} Uhr</b>, gut für Rad und Laufen (bis ${r0(t)} °C).`;
+  }
+  $("outwin").innerHTML = txt;
+  $("outwin").hidden = false;
 }
 
 /* ---------- Morgen-Check fürs Auto ---------- */
@@ -602,7 +701,7 @@ function loadAround(){
 }
 
 /* Verkehr: kleine Karte (24 × 24 km) und Liste nach Straßen */
-const TMAP = {size:300, km:12};          // halbe Kantenlänge in km
+const TMAP = {size:300, km:10};          // halbe Kantenlänge in km
 const tProj = ([lon,lat]) => {
   const s = TMAP.size/2/TMAP.km;
   return [TMAP.size/2 + (lon-LON)*111.32*Math.cos(LAT*Math.PI/180)*s, TMAP.size/2 - (lat-LAT)*111.32*s];
@@ -624,19 +723,20 @@ function trafficMap(items){
     const pts = x.geo.map(tProj), [px,py] = pts[0];
     if(pts.every(([u,v])=>u<-10||v<-10||u>S+10||v>S+10)) return "";
     const cls = `tm-${x.art}`, line = pts.length>1 ? `<polyline points="${pts.map(p=>p.map(n=>n.toFixed(1)).join(",")).join(" ")}"/>` : "";
-    return `<g class="${cls}" data-road="${esc(x.strasse)}">${line}<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${x.art==="sperrung"?5:3.5}"/></g>`;
+    return `<g class="${cls}" data-road="${esc(x.strasse)}">${line}<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${x.art==="sperrung"?6.5:4.5}"/><circle class="hit" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="14"/></g>`;
   }).join("");
   const places = PLACES.map(([n,la,lo,home])=>{
     const [x,y] = tProj([lo,la]);
     if(x<0||y<0||x>S||y>S) return "";
-    // Beschriftung: Holzgerlingen mittig darüber, sonst rechts daneben, am rechten Rand links daneben
-    const anchor = home ? "middle" : x + n.length*6 + 10 > S ? "end" : "start";
-    const tx = home ? x : anchor==="end" ? x-8 : x+8, ty = home ? y-10 : y+4;
+    // Beschriftung: Holzgerlingen mittig darüber, sonst rechts daneben; passt das nicht, mittig darunter
+    const below = !home && x + n.length*7 + 10 > S;
+    const anchor = home || below ? "middle" : "start";
+    const tx = anchor==="middle" ? Math.min(Math.max(x, n.length*4.2), S-n.length*4.2) : x+8, ty = home ? y-10 : below ? y+17 : y+4;
     return `<g class="tm-place${home?" home":""}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${home?5:3}"/><text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}">${n}</text></g>`;
   }).join("");
   const s = S/2/TMAP.km;
   const rings = [5,10].map(r=>`<circle class="tm-ring" cx="${S/2}" cy="${S/2}" r="${r*s}"/>`).join("");
-  return `<svg class="tmap" id="tmap" viewBox="0 0 ${S} ${S}" role="img" aria-label="Karte der Sperrungen und Baustellen rund um Holzgerlingen">${rings}${shapes}${places}<text class="tm-scale" x="${S/2}" y="${S/2+5*s+11}" text-anchor="middle">5 km</text></svg>`;
+  return `<svg class="tmap" id="tmap" viewBox="0 0 ${S} ${S}" role="img" aria-label="Karte der Sperrungen und Baustellen rund um Holzgerlingen">${trafficBase()}${rings}${shapes}${places}<text class="tm-scale" x="${S/2}" y="${S/2+5*s+11}" text-anchor="middle">5 km</text></svg>`;
 }
 function renderTraffic(d){
   const all = (d.eintraege||[]).filter(x=>x.art!=="warnung" || x.km<=12);
@@ -653,20 +753,27 @@ function renderTraffic(d){
       g.works.length && `${g.works.length} ${g.works.length>1?"Baustellen":"Baustelle"}`].filter(Boolean).join(" · ");
     const lead = (g.closed[0] || g.warn[0] || g.works[0]);
     const leadTxt = [lead.titel.replace(/^[ABLK]\d+\s*[:]?\s*/,""), itemWhen(lead)].filter(Boolean).join(", ");
-    return `<details class="troad" data-road="${esc(g.road)}"><summary>
+    return `<details class="troad" data-road="${esc(g.road)}"><summary><div class="trow">
       <span class="rbadge ${roadClass(g.road)}">${esc(g.road==="Ortsstraßen"?"Ort":g.road)}</span>
-      <span class="rtxt"><b>${parts}</b><small>${esc(leadTxt)}</small></span></summary>
+      <span class="rtxt"><b>${parts}</b><small>${esc(leadTxt)}</small></span><span class="chev" aria-hidden="true">›</span></div></summary>
       <ul class="alist">${g.items.map(trafficItem).join("")}</ul></details>`;
   };
   const top = list.slice(0,6), more = list.slice(6);
   let h = `<h3>Straßen</h3>`;
   if(!list.length){ $("aroundTraffic").innerHTML = h + `<p class="pnote">Keine Baustellen oder Sperrungen in der Nähe.</p>`; return; }
   h += trafficMap(all);
-  h += `<div class="tlegend"><span><i class="dot sperrung"></i>Sperrung</span><span><i class="dot baustelle"></i>Baustelle</span><span class="pnote">Tippe auf eine Straße für Details</span></div>`;
+  h += `<div class="tlegend"><span><i class="dot sperrung"></i>Sperrung</span><span><i class="dot baustelle"></i>Baustelle</span><span class="pnote">Tippe auf die Karte oder eine Straße</span></div>`;
   h += top.map(row).join("");
   if(more.length) h += `<details class="tmore"><summary>${more.length} weitere Straßen</summary>${more.map(row).join("")}</details>`;
   h += `<p class="pnote">Quellen: Autobahn GmbH des Bundes; Verkehrsministerium BW / MobiData BW (dl-de/by-2-0)</p>`;
   $("aroundTraffic").innerHTML = h;
+  $("tmap").addEventListener("click", e=>{
+    const g = e.target.closest("g[data-road]"); if(!g) return;
+    const row = $("aroundTraffic").querySelector(`details.troad[data-road="${CSS.escape(g.dataset.road)}"]`);
+    if(!row) return;
+    const more = row.closest("details.tmore"); if(more) more.open = true;
+    row.open = true; row.scrollIntoView({behavior:"smooth", block:"nearest"});
+  });
   // Aufgeklappte Straße auf der Karte hervorheben
   $("aroundTraffic").querySelectorAll("details.troad").forEach(el=>el.addEventListener("toggle",()=>{
     const open = [...$("aroundTraffic").querySelectorAll("details.troad[open]")].map(e=>e.dataset.road);
@@ -679,6 +786,50 @@ function renderLinks(id, title, items, source){
   $(id).innerHTML = `<h3>${title}</h3><ul class="alist">${items.map(x=>`<li><i class="dot"></i><div><a href="${esc(x.link)}" target="_blank" rel="noopener"><b>${esc(x.titel)}</b></a>${x.datum?`<small>${fmtDate.format(new Date(x.datum))}</small>`:""}</div></li>`).join("")}</ul><p class="pnote">${source}</p>`;
   $(id).hidden = false;
 }
+
+/* ---------- Push-Warnungen ---------- */
+// Öffentlicher Schlüssel (darf öffentlich sein); der private liegt nur bei Cloudflare
+const VAPID_PUBLIC = "BO4jexkSlH64UWm1nEK4GAOUHv5HvCzJgb9XA3K2mQh2W6zcqfMqzUqEsGV0LHwCLSNEcRL3ajh9xDdwTCMN27U";
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+async function initPush(){
+  const box = $("pushbox"), btn = $("pushBtn"), txt = $("pushText");
+  const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  if(!supported){
+    if(isIOS && !standalone){
+      txt.textContent = "Leg die Seite zuerst auf den Home-Bildschirm (Teilen → Zum Home-Bildschirm) und öffne sie von dort.";
+      btn.hidden = true; box.hidden = false;
+    }
+    return;
+  }
+  const reg = await navigator.serviceWorker.register("sw.js");
+  let sub = await reg.pushManager.getSubscription();
+  const show = () => {
+    btn.textContent = sub ? "Ausschalten" : "Einschalten";
+    btn.classList.toggle("off", !!sub);
+    txt.textContent = sub ? "Ist an: Unwetter, Glätte am Morgen, neue Sperrungen auf der A81."
+      : Notification.permission === "denied" ? "Mitteilungen sind in den Einstellungen blockiert."
+      : "Bei Unwetter, Glätte am Morgen und neuen Sperrungen auf der A81.";
+  };
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try{
+      if(sub){
+        await fetch(`${BACKEND}/push/unsubscribe`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({endpoint:sub.endpoint})});
+        await sub.unsubscribe(); sub = null;
+      } else {
+        if(await Notification.requestPermission() !== "granted"){ show(); return; }
+        sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64url(VAPID_PUBLIC)});
+        const r = await fetch(`${BACKEND}/push/subscribe`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(sub)});
+        if(!r.ok) throw new Error("Anmeldung fehlgeschlagen");
+      }
+    }catch(e){ txt.textContent = "Das hat nicht geklappt. Bitte später noch einmal versuchen."; btn.disabled = false; return; }
+    btn.disabled = false; show();
+  };
+  show(); box.hidden = false;
+}
+function b64url(s){ const b = atob(s.replace(/-/g,"+").replace(/_/g,"/") + "===".slice((s.length+3)%4)); return Uint8Array.from(b, c=>c.charCodeAt(0)); }
+initPush().catch(()=>{});
 
 /* ---------- Beispieldaten, nur falls der Abruf scheitert ---------- */
 function demoHourly(now){
