@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#e9ede8">
 <title>Schönbuch Wetter</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
 /* Layout: eine Spalte wie eine App, Karten nur für Warnung und Radar; Daten in Tabellenziffern */
 :root{
@@ -137,6 +139,22 @@ button{font:inherit;color:inherit}
 .ptxt{color:var(--muted);font-size:.8rem;text-align:right}
 .pnote{color:var(--muted);font-size:.85rem;margin:0}
 
+/* Rund um Holzgerlingen */
+.around{display:flex;flex-direction:column;gap:14px}
+.around h3{font-family:var(--display);font-size:.95rem;margin:0 0 4px;color:var(--muted);font-weight:700}
+.alist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.alist li{padding:9px 0;border-bottom:1px solid var(--line);font-size:.92rem;display:flex;gap:10px;align-items:baseline}
+.alist li:last-child{border-bottom:0}
+.alist .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--line);transform:translateY(-1px)}
+.alist .dot.sperrung{background:var(--danger)}
+.alist .dot.warnung{background:var(--warn)}
+.alist .dot.baustelle{background:var(--warn);opacity:.55}
+.alist b{font-weight:600}
+.alist small{display:block;color:var(--muted);font-size:.8rem}
+.alist a{color:inherit;text-decoration:none}
+.alist a:hover{text-decoration:underline}
+.around details summary{cursor:pointer;font-size:.85rem;font-weight:700;color:var(--accent);padding:6px 0}
+
 footer{font-size:.8rem;color:var(--muted);line-height:1.6}
 footer a{color:inherit}
 @media (prefers-reduced-motion: reduce){*{scroll-behavior:auto}}
@@ -201,6 +219,13 @@ footer a{color:inherit}
   <section aria-labelledby="dh" style="display:flex;flex-direction:column;gap:6px">
     <h2 id="dh">7 Tage</h2>
     <div class="days num" id="days"></div>
+  </section>
+
+  <section class="around" aria-labelledby="ah">
+    <h2 id="ah">Rund um Holzgerlingen</h2>
+    <div id="aroundTraffic"><h3>Straßen</h3><p class="pnote">Wird geladen …</p></div>
+    <div id="aroundTown" hidden></div>
+    <div id="aroundPolice" hidden></div>
   </section>
 
   <footer>Daten: Deutscher Wetterdienst (DWD), abgerufen über <a href="https://brightsky.dev" target="_blank" rel="noopener">Bright Sky</a>. Modell- und Stationswerte, Radar-Nowcast bis etwa 2 Stunden. Prototyp, keine amtliche Warnplattform.</footer>
@@ -283,6 +308,7 @@ async function load(){
   renderSummary(hourly, now);
   renderCar(hourly, now);
   loadPollen();
+  loadAround();
   renderAlerts(al.status==="fulfilled" ? al.value.alerts : (demo ? demoAlerts(now) : null));
   initRadar(rd.status==="fulfilled" ? rd.value : demoRadar(now), rd.status!=="fulfilled");
   $("stamp").textContent = (demo ? "Beispiel · " : "Stand ") + fmtT.format(current.timestamp ? new Date(current.timestamp) : now) + " Uhr";
@@ -525,6 +551,43 @@ async function loadPollen(){
   }catch(e){
     el.innerHTML = `<p class="pnote">Pollendaten konnten gerade nicht geladen werden.</p>`;
   }
+}
+
+/* ---------- Rund um Holzgerlingen (über das eigene Backend) ---------- */
+const BACKEND = "https://api.schoenbuchwetter.workers.dev";
+const SHOW_POLICE = true; // Polizeimeldungen nur Überschrift + Link; vor öffentlichem Start Erlaubnis bei news aktuell klären
+const fmtDate = new Intl.DateTimeFormat("de-DE",{day:"numeric",month:"short",timeZone:TZ});
+const fmtDateY = new Intl.DateTimeFormat("de-DE",{day:"numeric",month:"short",year:"numeric",timeZone:TZ});
+const shortDate = d => (d.getFullYear()===new Date().getFullYear() ? fmtDate : fmtDateY).format(d);
+const ART = {sperrung:"Sperrung", warnung:"Verkehrsmeldung", baustelle:"Baustelle"};
+function loadAround(){
+  getJSON(`${BACKEND}/verkehr`).then(renderTraffic).catch(()=>{
+    $("aroundTraffic").innerHTML = `<h3>Straßen</h3><p class="pnote">Verkehrsmeldungen konnten gerade nicht geladen werden.</p>`;
+  });
+  getJSON(`${BACKEND}/stadt`).then(d=>renderLinks("aroundTown","Aus dem Rathaus",d.eintraege.slice(0,4),"Quelle: Stadt Holzgerlingen")).catch(()=>{});
+  if(SHOW_POLICE) getJSON(`${BACKEND}/polizei`).then(d=>renderLinks("aroundPolice","Polizei",d.eintraege.slice(0,3),"Quelle: Polizeipräsidium Ludwigsburg, presseportal.de")).catch(()=>{});
+}
+function trafficItem(x){
+  const until = x.bis ? ` · bis ${shortDate(new Date(x.bis))}` : "";
+  const sub = [x.richtung, x.info && x.info!==x.titel ? x.info : ""].filter(Boolean).join(" · ");
+  return `<li><i class="dot ${x.art}" title="${ART[x.art]}"></i><div><b>${esc(x.titel)}</b>
+    <small>${ART[x.art]}${until}${sub?` · ${esc(sub)}`:""}</small></div></li>`;
+}
+function renderTraffic(d){
+  const all = d.eintraege||[];
+  // Oben nur Sperrungen und Meldungen in der Nähe, Baustellen ausgeklappt
+  const top = all.filter(x=>x.art!=="baustelle" && x.km<=10).slice(0,4);
+  const rest = all.filter(x=>!top.includes(x));
+  let h = `<h3>Straßen</h3>`;
+  h += top.length ? `<ul class="alist">${top.map(trafficItem).join("")}</ul>` : `<p class="pnote">Keine Sperrungen in der Nähe.</p>`;
+  if(rest.length) h += `<details><summary>${rest.length} weitere Baustellen und Sperrungen im Umkreis</summary><ul class="alist">${rest.map(trafficItem).join("")}</ul></details>`;
+  h += `<p class="pnote">Quellen: Autobahn GmbH des Bundes; Verkehrsministerium BW / MobiData BW (dl-de/by-2-0)</p>`;
+  $("aroundTraffic").innerHTML = h;
+}
+function renderLinks(id, title, items, source){
+  if(!items || !items.length) return;
+  $(id).innerHTML = `<h3>${title}</h3><ul class="alist">${items.map(x=>`<li><i class="dot"></i><div><a href="${esc(x.link)}" target="_blank" rel="noopener"><b>${esc(x.titel)}</b></a>${x.datum?`<small>${fmtDate.format(new Date(x.datum))}</small>`:""}</div></li>`).join("")}</ul><p class="pnote">${source}</p>`;
+  $(id).hidden = false;
 }
 
 /* ---------- Beispieldaten, nur falls der Abruf scheitert ---------- */
