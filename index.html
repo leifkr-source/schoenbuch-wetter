@@ -499,7 +499,8 @@ function renderCar(h, now){
 }
 
 /* ---------- Pollenflug (DWD) ---------- */
-const POLLEN_URL = "https://opendata.dwd.de/climate_environment/health/alerts/s31fg.json";
+// Über das eigene Backend (Cloudflare Worker), weil der DWD keinen direkten Abruf aus dem Browser erlaubt (CORS)
+const POLLEN_URL = "https://api.schoenbuchwetter.workers.dev/pollen";
 const P_LEVEL = {"0":[0,"keine"],"0-1":[1,"gering"],"1":[2,"gering"],"1-2":[3,"gering–mittel"],"2":[4,"mittel"],"2-3":[5,"mittel–hoch"],"3":[6,"hoch"]};
 async function loadPollen(){
   const el = $("pollen");
