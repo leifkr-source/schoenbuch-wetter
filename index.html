@@ -77,10 +77,16 @@ button{font:inherit;color:inherit}
 
 /* Warnungen */
 .warns{display:flex;flex-direction:column;gap:12px}
-.warn{background:var(--warn-bg);color:var(--warn-ink);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:8px;border-left:6px solid var(--warn)}
+.warn{background:var(--warn-bg);color:var(--warn-ink);border-radius:14px;padding:10px 14px;border-left:6px solid var(--warn)}
+.warn>summary{display:block;list-style:none;cursor:pointer;position:relative;padding-right:22px}
+.warn>summary::-webkit-details-marker{display:none}
+.warn>summary::after{content:"›";position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:1.3rem;opacity:.6;transition:transform .2s}
+.warn[open]>summary::after{transform:translateY(-50%) rotate(90deg)}
+.warn>div{margin-top:10px}
+.warn>div p{margin:4px 0 0}
 .warn.severe,.warn.extreme{border-left-color:var(--danger)}
-.warn h3{margin:0;font-family:var(--display);font-size:1.05rem}
-.warn .when{font-size:.82rem;opacity:.85}
+.warn h3{margin:0;font-family:var(--display);font-size:1rem;line-height:1.3}
+.warn .when{display:block;font-size:.82rem;opacity:.85;margin-top:2px}
 .warn p{margin:0;font-size:.92rem}
 .warn ul{margin:0;padding-left:20px;font-size:.92rem}
 .warn details summary{cursor:pointer;font-size:.85rem;font-weight:700}
@@ -191,18 +197,22 @@ button{font:inherit;color:inherit}
 .tlegend .dot.sperrung{background:var(--danger)} .tlegend .dot.baustelle{background:var(--warn)}
 .tlegend .pnote{margin-left:auto;font-size:.78rem}
 .train{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.tdir{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.tdir{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px;min-width:0}
 .tdir b{display:block;font-size:.8rem;color:var(--muted);font-weight:600;margin-bottom:4px}
 .tdep{display:flex;justify-content:space-between;align-items:baseline;gap:6px;padding:3px 0;font-variant-numeric:tabular-nums}
-.tdep .tt{font-weight:700;font-size:1.05rem}
+.tdep .tt{font-weight:700;font-size:1.05rem;white-space:nowrap}
 .tdep .tt s{color:var(--muted);font-weight:400;font-size:.85rem;margin-right:4px}
-.tdep small{font-size:.78rem;color:var(--muted);white-space:nowrap}
+.tdep small{font-size:.75rem;color:var(--muted);white-space:nowrap}
 .tdep .late{color:var(--danger);font-weight:700}
 .tdep .gone{color:var(--danger);font-weight:700;text-decoration:line-through}
 .sev{display:inline-block;font-size:.72rem;font-weight:700;background:var(--warn-bg);color:var(--warn-ink);border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:1px}
+.tsub{margin-top:14px!important}
+.lbadge{display:inline-block;min-width:2.3em;text-align:center;font-size:.68rem;font-weight:800;border-radius:4px;padding:1px 3px;margin-right:5px;vertical-align:2px;color:#fff}
+.lbadge.s{background:#4b9b37}
+.lbadge.r{background:#e2001a}
 .tinfo{background:var(--warn-bg);color:var(--warn-ink);border-radius:12px;padding:10px 12px;margin-top:10px;font-size:.88rem}
 .around .tinfo summary{cursor:pointer;font-weight:700;color:inherit;padding:0}
-.tinfo p{margin:6px 0 0;white-space:pre-line}
+.tinfo p{margin:8px 0 0;white-space:pre-line}
 .troad{border-bottom:1px solid var(--line)}
 .around .troad summary{display:block;list-style:none;cursor:pointer;padding:12px 0;color:var(--fg);font-weight:400;font-size:1rem;-webkit-tap-highlight-color:transparent}
 .around .troad summary::-webkit-details-marker{display:none}
@@ -253,6 +263,11 @@ footer a{color:inherit}
     <div id="carText"></div>
   </div>
 
+  <section aria-labelledby="hh" style="display:flex;flex-direction:column;gap:10px">
+    <h2 id="hh">Nächste 24 Stunden</h2>
+    <div class="hours num" id="hours"></div>
+  </section>
+
   <section class="warns" aria-labelledby="wh">
     <h2 id="wh">Warnungen vom DWD</h2>
     <div id="warns"><div class="ok"><i></i>Wird geladen …</div></div>
@@ -280,10 +295,6 @@ footer a{color:inherit}
       <i style="background:#f2c200"></i>10 <i style="background:#e5482b"></i>30</div>
   </section>
 
-  <section aria-labelledby="hh" style="display:flex;flex-direction:column;gap:10px">
-    <h2 id="hh">Nächste 24 Stunden</h2>
-    <div class="hours num" id="hours"></div>
-  </section>
 
   <section aria-labelledby="dh" style="display:flex;flex-direction:column;gap:6px">
     <h2 id="dh">7 Tage</h2>
@@ -395,8 +406,35 @@ function renderNow(c){
     `<span>Wind <b>${r0(wind)} km/h</b></span>`,
     gust!=null ? `<span>Böen <b>${r0(gust)} km/h</b></span>` : "",
     c.relative_humidity!=null ? `<span>Feuchte <b>${r0(c.relative_humidity)} %</b></span>` : "",
-    c.cloud_cover!=null ? `<span>Wolken <b>${r0(c.cloud_cover)} %</b></span>` : ""
+    c.cloud_cover!=null ? `<span>Wolken <b>${r0(c.cloud_cover)} %</b></span>` : "",
+    lightFact()
   ].filter(Boolean).join("");
+}
+/* Dämmerung (bürgerlich, Sonne 6° unter dem Horizont) nach NOAA, ohne externe Daten */
+function twilight(date, dusk){
+  const rad = Math.PI/180, zen = 96;
+  const start = Date.UTC(date.getUTCFullYear(),0,0);
+  const N = Math.floor((Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate()) - start)/864e5);
+  const lngHour = LON/15, t = N + ((dusk ? 18 : 6) - lngHour)/24;
+  const M = 0.9856*t - 3.289;
+  let L = (M + 1.916*Math.sin(M*rad) + 0.020*Math.sin(2*M*rad) + 282.634 + 360) % 360;
+  let RA = (Math.atan(0.91764*Math.tan(L*rad))/rad + 360) % 360;
+  RA = (RA + Math.floor(L/90)*90 - Math.floor(RA/90)*90)/15;
+  const sinDec = 0.39782*Math.sin(L*rad), cosDec = Math.cos(Math.asin(sinDec));
+  const cosH = (Math.cos(zen*rad) - sinDec*Math.sin(LAT*rad))/(cosDec*Math.cos(LAT*rad));
+  if(cosH > 1 || cosH < -1) return null;
+  const H = (dusk ? Math.acos(cosH)/rad : 360 - Math.acos(cosH)/rad)/15;
+  const UT = ((H + RA - 0.06571*t - 6.622 - lngHour) % 24 + 24) % 24;
+  const d = new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate())); d.setTime(d.getTime() + UT*36e5);
+  return d;
+}
+function lightFact(){
+  const now = new Date(), dusk = twilight(now, true), dawn = twilight(now, false);
+  if(!dusk || !dawn) return "";
+  if(now < dawn) return `<span>Hell ab <b>${fmtT.format(dawn)} Uhr</b></span>`;
+  if(now < dusk) return `<span>Dunkel ab <b>${fmtT.format(dusk)} Uhr</b></span>`;
+  const next = twilight(new Date(now.getTime()+864e5), false);
+  return next ? `<span>Hell ab <b>${fmtT.format(next)} Uhr</b></span>` : "";
 }
 function synthCurrent(h, now){
   const x = h.reduce((a,b)=>Math.abs(new Date(b.timestamp)-now)<Math.abs(new Date(a.timestamp)-now)?b:a);
@@ -447,15 +485,25 @@ function renderAlerts(list){
   const el = $("warns");
   if(list===null){ el.innerHTML = `<div class="ok"><i style="background:var(--muted)"></i>Warnungen konnten gerade nicht geladen werden.</div>`; return; }
   if(!list.length){ el.innerHTML = `<div class="ok"><i></i>Aktuell keine Warnungen für Holzgerlingen.</div>`; return; }
+  // Kompakt: Schlagzeile und Zeitraum, Tipps und amtlicher Text nur ausgeklappt
   el.innerHTML = list.map(a=>{
     const tips = tipsFor((a.event_de||"")+" "+(a.headline_de||""));
-    return `<article class="warn ${a.severity||""}">
+    return `<details class="warn ${a.severity||""}"><summary>
       <h3>${esc(a.headline_de||a.event_de)}</h3>
-      <span class="when">${a.onset?fmtFull.format(new Date(a.onset)):""}${a.expires?" bis "+fmtFull.format(new Date(a.expires)):""}</span>
+      <span class="when">${whenRange(a.onset, a.expires)}</span></summary>
       ${tips.length?`<div><b>Was du jetzt tun kannst</b><ul>${tips.map(t=>`<li>${t}</li>`).join("")}</ul></div>`:""}
-      <details><summary>Amtlicher Text</summary><p>${esc(a.description_de||"")}</p>${a.instruction_de?`<p>${esc(a.instruction_de)}</p>`:""}</details>
-    </article>`;
+      <div><b>Amtlicher Text</b><p>${esc(a.description_de||"")}</p>${a.instruction_de?`<p>${esc(a.instruction_de)}</p>`:""}</div>
+    </details>`;
   }).join("");
+}
+// „heute 14:00–20:00“, „heute 14:00 – Mo 06:00“
+function whenRange(from, to){
+  const today = dayKey(new Date()), tomorrow = dayKey(new Date(Date.now()+864e5));
+  const day = d => { const k = dayKey(d); return k===today ? "heute" : k===tomorrow ? "morgen" : fmtD.format(d) + " " + fmtDate.format(d); };
+  const a = from ? new Date(from) : null, b = to ? new Date(to) : null;
+  if(a && b) return dayKey(a)===dayKey(b) ? `${day(a)} ${fmtT.format(a)}–${fmtT.format(b)} Uhr` : `${day(a)} ${fmtT.format(a)} – ${day(b)} ${fmtT.format(b)} Uhr`;
+  if(b) return `bis ${day(b)} ${fmtT.format(b)} Uhr`;
+  return a ? `ab ${day(a)} ${fmtT.format(a)} Uhr` : "";
 }
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
@@ -619,6 +667,15 @@ function renderOutWindow(h, now, evening){
   });
   if(hrs.length < 2){ $("outwin").hidden = true; return; }
   const ok = x => (x.precipitation||0) < 0.1 && (x.precipitation_probability??0) < 40 && (x.wind_gust_speed||0) < 45;
+  // nur Stunden, in denen es noch hell ist
+  const dusk = twilight(evening ? new Date(now.getTime()+864e5) : now, true);
+  const light = dusk ? hrs.filter(x=>new Date(x.timestamp).getTime() + 30*6e4 <= dusk.getTime()) : hrs;
+  if(light.length < hrs.length && !light.some(ok)){
+    const firstDry = hrs.find(ok);
+    $("outwin").innerHTML = firstDry ? `Trocken erst ab <b>${hourOf(new Date(firstDry.timestamp))} Uhr</b>, dann ist es schon dunkel.` : `${evening?"Morgen":"Heute"} kein trockenes Zeitfenster draußen.`;
+    $("outwin").hidden = false; return;
+  }
+  hrs.length = 0; hrs.push(...light);
   let best = null, cur = null;
   hrs.forEach((x,i)=>{
     if(ok(x)){ cur = cur ? {...cur, end:i} : {start:i, end:i}; if(!best || cur.end-cur.start > best.end-best.start) best = cur; }
@@ -631,7 +688,7 @@ function renderOutWindow(h, now, evening){
     const n = best.end - best.start + 1, sl = hrs.slice(best.start, best.end+1);
     const from = hourOf(new Date(sl[0].timestamp)), to = hourOf(new Date(sl[sl.length-1].timestamp)) + 1;
     const t = Math.max(...sl.map(x=>x.temperature??-99));
-    if(n === hrs.length) txt = `<b>Trocken bis zum Abend</b>, gut für Rad und Laufen (bis ${r0(t)} °C).`;
+    if(n === hrs.length) txt = `<b>Trocken, solange es hell ist</b>, gut für Rad und Laufen (bis ${r0(t)} °C).`;
     else if(n === 1) txt = `Nur kurz trocken: <b>${from}–${to} Uhr</b>.`;
     else txt = `Draußen trocken: <b>${from}–${to} Uhr</b>, gut für Rad und Laufen (bis ${r0(t)} °C).`;
   }
@@ -739,8 +796,21 @@ function renderTrain(d){
   };
   const sev = deps.some(a=>a.ersatz);
   let h = `<h3>Schönbuchbahn${sev?'<span class="sev">Ersatzbus</span>':""}</h3><div class="train">${col("Böblingen")}${col("Dettenhausen")}</div>`;
-  for(const i of d.hinweise||[]) h += `<details class="tinfo"><summary>${esc(i.titel)}</summary><p>${esc(i.text)}</p></details>`;
-  h += `<p class="pnote">Ab Holzgerlingen Bahnhof · Echtzeit: VVS</p>`;
+  // Anschlüsse ab Böblingen Bahnhof (S1 und Regionalzüge)
+  const bb = d.boeblingen;
+  if(bb && (bb.stuttgart.length || bb.herrenberg.length)){
+    const conn = a => {
+      const t = new Date(a.echt || a.plan);
+      const late = a.ausfall ? `<span class="gone">fällt aus</span>` : a.verspaetung > 0 ? `<span class="late">+${a.verspaetung}</span>` : "";
+      return `<div class="tdep"><span class="tt"><span class="lbadge ${a.linie==="S1"?"s":"r"}">${esc(a.linie)}</span>${fmtT.format(t)}</span><small>${late} ${a.gleis?`Gl. ${esc(a.gleis)}`:""}</small></div>`;
+    };
+    const ccol = (name, list) => list.length ? `<div class="tdir"><b>→ ${name}</b>${list.slice(0,3).map(conn).join("")}</div>` : "";
+    h += `<h3 class="tsub">Anschluss ab Böblingen</h3><div class="train">${ccol("Stuttgart", bb.stuttgart)}${ccol("Herrenberg", bb.herrenberg)}</div>`;
+  }
+  // Alle Bauarbeiten-Hinweise in einem einzigen aufklappbaren Kasten
+  const hints = [...(d.hinweise||[]), ...((bb && bb.hinweise)||[])];
+  if(hints.length) h += `<details class="tinfo"><summary>${hints.length===1 ? esc(hints[0].titel) : `${hints.length} Hinweise zu Bauarbeiten und Ersatzverkehr`}</summary>${hints.map(i=>`<p><b>${esc(i.titel)}</b>\n${esc(i.text)}</p>`).join("")}</details>`;
+  h += `<p class="pnote">Ab Holzgerlingen und Böblingen Bahnhof · Echtzeit: VVS</p>`;
   $("aroundTrain").innerHTML = h;
   $("aroundTrain").hidden = false;
 }
