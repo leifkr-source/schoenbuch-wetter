@@ -52,6 +52,28 @@ function firstPoint(geom) {
   return Array.isArray(c) ? { lon: +c[0], lat: +c[1] } : null;
 }
 
+// Linienverlauf vereinfachen (höchstens 24 Punkte, 4 Nachkommastellen ≈ 10 m) für die Karte
+function simplify(geom) {
+  if (!geom) return null;
+  let line = geom.coordinates;
+  if (geom.type === "Point") line = [line];
+  else if (geom.type === "MultiLineString" || geom.type === "Polygon") line = line[0];
+  else if (geom.type === "MultiPolygon") line = line[0][0];
+  if (!Array.isArray(line) || !line.length) return null;
+  const step = Math.max(1, Math.ceil(line.length / 24));
+  const pts = line.filter((_, i) => i % step === 0 || i === line.length - 1);
+  return pts.map(([lon, lat]) => [Math.round(lon * 1e4) / 1e4, Math.round(lat * 1e4) / 1e4]);
+}
+
+// Straßennummer erkennen, z. B. „L1184 Holzgerlingen-Herrenberg“ → „L1184“
+function roadOf(...texts) {
+  for (const t of texts) {
+    const m = String(t || "").match(/\b([ABLK])\s?(\d{1,4})\b/);
+    if (m) return m[1] + m[2];
+  }
+  return "Ortsstraßen";
+}
+
 // „Ende: 30.09.27 um 00:00 Uhr“ → ISO-Zeit
 function parseEnde(lines) {
   const m = (lines || []).join(" ").match(/Ende: (\d\d)\.(\d\d)\.(\d\d) um (\d\d):(\d\d)/);
@@ -70,6 +92,7 @@ async function loadVerkehr() {
   const results = await Promise.allSettled(
     roads.flatMap((road) => services.map((s) => get(`https://verkehr.autobahn.de/o/autobahn/${road}/services/${s}`).then((d) => d[s] || [])))
   );
+  const seenIds = new Set();
   for (const r of results) {
     if (r.status !== "fulfilled") continue;
     for (const x of r.value) {
@@ -79,8 +102,11 @@ async function loadVerkehr() {
       if (!aktiv(x.startTimestamp, bis)) continue;
       const art = x.display_type === "WARNING" ? "warnung" : x.display_type === "CLOSURE" || x.isBlocked === "true" ? "sperrung" : "baustelle";
       const info = (x.description || []).filter((l) => l && !/^(Zeitraum|Beginn|Ende|Länge|\(Ende|Die Baustelle)/.test(l) && !/^\d\d\.\d\d\.\d\d /.test(l));
+      if (seenIds.has(x.identifier)) continue;
+      seenIds.add(x.identifier);
       items.push({
         quelle: "Autobahn",
+        strasse: roadOf(x.title),
         art,
         titel: x.title.replace(/\s*\|\s*/, ": "),
         richtung: (x.subtitle || "").trim(),
@@ -88,6 +114,7 @@ async function loadVerkehr() {
         von: x.startTimestamp || null,
         bis,
         km: Math.round(km(lat, lon) * 10) / 10,
+        geo: simplify(x.geometry) || [[lon, lat]],
       });
     }
   }
@@ -103,6 +130,7 @@ async function loadVerkehr() {
       const street = x.street && x.street !== "Gemeindestraße" ? x.street : "";
       items.push({
         quelle: "MobiData BW",
+        strasse: roadOf(x.street, x.description),
         art: x.type === "ROAD_CLOSED" ? "sperrung" : "baustelle",
         titel: (x.description || "Baustelle").replace(/^keine Beschreibung vorhanden\s*/i, ""),
         richtung: street,
@@ -110,6 +138,7 @@ async function loadVerkehr() {
         von: x.starttime || null,
         bis: x.endtime || null,
         km: Math.round(km(p.lat, p.lon) * 10) / 10,
+        geo: simplify(f.geometry),
       });
     }
   } catch {}

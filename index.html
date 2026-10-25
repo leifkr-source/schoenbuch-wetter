@@ -154,6 +154,36 @@ button{font:inherit;color:inherit}
 .alist a{color:inherit;text-decoration:none}
 .alist a:hover{text-decoration:underline}
 .around details summary{cursor:pointer;font-size:.85rem;font-weight:700;color:var(--accent);padding:6px 0}
+.tmap{width:100%;aspect-ratio:1/1;display:block;background:var(--surface);border:1px solid var(--line);border-radius:14px;margin-bottom:8px}
+.tm-ring{fill:none;stroke:var(--line);stroke-width:1;stroke-dasharray:3 5}
+.tm-scale{font-size:9px;fill:var(--muted)}
+.tm-place circle{fill:var(--fg)}
+.tm-place.home circle{fill:var(--accent);stroke:var(--surface);stroke-width:2}
+.tm-place text{font-size:10.5px;font-weight:600;fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:3px;stroke-linejoin:round}
+.tmap g[data-road] polyline{fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
+.tm-sperrung polyline{stroke:var(--danger)} .tm-sperrung circle{fill:var(--danger);stroke:var(--surface);stroke-width:1.5}
+.tm-baustelle polyline,.tm-warnung polyline{stroke:var(--warn)} .tm-baustelle circle,.tm-warnung circle{fill:var(--warn);stroke:var(--surface);stroke-width:1}
+.tmap g[data-road]{transition:opacity .2s}
+.tmap.focus g[data-road]:not(.on){opacity:.15}
+.tlegend{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:.8rem;color:var(--muted);margin-bottom:4px}
+.tlegend span{display:inline-flex;gap:6px;align-items:center}
+.tlegend .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.tlegend .dot.sperrung{background:var(--danger)} .tlegend .dot.baustelle{background:var(--warn)}
+.tlegend .pnote{margin-left:auto;font-size:.78rem}
+.troad{border-bottom:1px solid var(--line)}
+.around .troad summary{list-style:none;display:flex;gap:12px;align-items:center;padding:10px 0;color:var(--fg);font-weight:400;font-size:.92rem}
+.around .troad summary::-webkit-details-marker{display:none}
+.troad summary::after{content:"›";margin-left:auto;color:var(--muted);font-size:1.2rem;transition:transform .2s}
+.troad[open] summary::after{transform:rotate(90deg)}
+.rtxt{display:flex;flex-direction:column;min-width:0}
+.rtxt b{font-weight:600}
+.rtxt small{color:var(--muted);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rbadge{flex:none;min-width:3.4em;text-align:center;font-weight:800;font-size:.8rem;padding:3px 6px;border-radius:5px;letter-spacing:.02em}
+.rbadge.ra{background:#1d4ed8;color:#fff}
+.rbadge.rb{background:#f4c400;color:#1a1a1a}
+.rbadge.rl{background:#fff;color:#1a1a1a;border:1.5px solid #1a1a1a}
+.rbadge.ro{background:var(--line);color:var(--fg)}
+.troad .alist{padding:0 0 8px 4px}
 
 footer{font-size:.8rem;color:var(--muted);line-height:1.6}
 footer a{color:inherit}
@@ -560,29 +590,89 @@ const fmtDate = new Intl.DateTimeFormat("de-DE",{day:"numeric",month:"short",tim
 const fmtDateY = new Intl.DateTimeFormat("de-DE",{day:"numeric",month:"short",year:"numeric",timeZone:TZ});
 const shortDate = d => (d.getFullYear()===new Date().getFullYear() ? fmtDate : fmtDateY).format(d);
 const ART = {sperrung:"Sperrung", warnung:"Verkehrsmeldung", baustelle:"Baustelle"};
+const MAYOR_WA = "https://whatsapp.com/channel/0029Vb9IFl9Jpe8YdvGkKt47";
 function loadAround(){
   getJSON(`${BACKEND}/verkehr`).then(renderTraffic).catch(()=>{
     $("aroundTraffic").innerHTML = `<h3>Straßen</h3><p class="pnote">Verkehrsmeldungen konnten gerade nicht geladen werden.</p>`;
   });
-  getJSON(`${BACKEND}/stadt`).then(d=>renderLinks("aroundTown","Aus dem Rathaus",d.eintraege.slice(0,4),"Quelle: Stadt Holzgerlingen")).catch(()=>{});
+  // Rathaus: Die Stadtseite ist selten aktuell, daher nur der Kanal des Bürgermeisters
+  $("aroundTown").innerHTML = `<h3>Aus dem Rathaus</h3><ul class="alist"><li><i class="dot"></i><div><a href="${MAYOR_WA}" target="_blank" rel="noopener"><b>Bürgermeister Delakos auf WhatsApp</b></a><small>Aktuelle Infos direkt aus dem Rathaus</small></div></li></ul>`;
+  $("aroundTown").hidden = false;
   if(SHOW_POLICE) getJSON(`${BACKEND}/polizei`).then(d=>renderLinks("aroundPolice","Polizei",d.eintraege.slice(0,3),"Quelle: Polizeipräsidium Ludwigsburg, presseportal.de")).catch(()=>{});
 }
+
+/* Verkehr: kleine Karte (24 × 24 km) und Liste nach Straßen */
+const TMAP = {size:300, km:12};          // halbe Kantenlänge in km
+const tProj = ([lon,lat]) => {
+  const s = TMAP.size/2/TMAP.km;
+  return [TMAP.size/2 + (lon-LON)*111.32*Math.cos(LAT*Math.PI/180)*s, TMAP.size/2 - (lat-LAT)*111.32*s];
+};
+function roadClass(r){ return r[0]==="A" ? "ra" : r[0]==="B" ? "rb" : r==="Ortsstraßen" ? "ro" : "rl"; }
+function itemWhen(x){
+  const now = Date.now();
+  if(x.von && Date.parse(x.von) > now) return `ab ${shortDate(new Date(x.von))}`;
+  return x.bis ? `bis ${shortDate(new Date(x.bis))}` : "";
+}
 function trafficItem(x){
-  const until = x.bis ? ` · bis ${shortDate(new Date(x.bis))}` : "";
-  const sub = [x.richtung, x.info && x.info!==x.titel ? x.info : ""].filter(Boolean).join(" · ");
-  return `<li><i class="dot ${x.art}" title="${ART[x.art]}"></i><div><b>${esc(x.titel)}</b>
-    <small>${ART[x.art]}${until}${sub?` · ${esc(sub)}`:""}</small></div></li>`;
+  const sub = [ART[x.art], itemWhen(x), x.richtung && x.richtung!==x.titel ? x.richtung : ""].filter(Boolean).join(" · ");
+  return `<li><i class="dot ${x.art}"></i><div><b>${esc(x.titel)}</b><small>${esc(sub)}</small></div></li>`;
+}
+function trafficMap(items){
+  const S = TMAP.size;
+  const shapes = items.slice().sort((a,b)=>(a.art==="sperrung")-(b.art==="sperrung")).map(x=>{
+    if(!x.geo || !x.geo.length) return "";
+    const pts = x.geo.map(tProj), [px,py] = pts[0];
+    if(pts.every(([u,v])=>u<-10||v<-10||u>S+10||v>S+10)) return "";
+    const cls = `tm-${x.art}`, line = pts.length>1 ? `<polyline points="${pts.map(p=>p.map(n=>n.toFixed(1)).join(",")).join(" ")}"/>` : "";
+    return `<g class="${cls}" data-road="${esc(x.strasse)}">${line}<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${x.art==="sperrung"?5:3.5}"/></g>`;
+  }).join("");
+  const places = PLACES.map(([n,la,lo,home])=>{
+    const [x,y] = tProj([lo,la]);
+    if(x<0||y<0||x>S||y>S) return "";
+    // Beschriftung: Holzgerlingen mittig darüber, sonst rechts daneben, am rechten Rand links daneben
+    const anchor = home ? "middle" : x + n.length*6 + 10 > S ? "end" : "start";
+    const tx = home ? x : anchor==="end" ? x-8 : x+8, ty = home ? y-10 : y+4;
+    return `<g class="tm-place${home?" home":""}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${home?5:3}"/><text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}">${n}</text></g>`;
+  }).join("");
+  const s = S/2/TMAP.km;
+  const rings = [5,10].map(r=>`<circle class="tm-ring" cx="${S/2}" cy="${S/2}" r="${r*s}"/>`).join("");
+  return `<svg class="tmap" id="tmap" viewBox="0 0 ${S} ${S}" role="img" aria-label="Karte der Sperrungen und Baustellen rund um Holzgerlingen">${rings}${shapes}${places}<text class="tm-scale" x="${S/2}" y="${S/2+5*s+11}" text-anchor="middle">5 km</text></svg>`;
 }
 function renderTraffic(d){
-  const all = d.eintraege||[];
-  // Oben nur Sperrungen und Meldungen in der Nähe, Baustellen ausgeklappt
-  const top = all.filter(x=>x.art!=="baustelle" && x.km<=10).slice(0,4);
-  const rest = all.filter(x=>!top.includes(x));
+  const all = (d.eintraege||[]).filter(x=>x.art!=="warnung" || x.km<=12);
+  // Nach Straße gruppieren; Straßen mit Sperrung zuerst, dann nach Entfernung
+  const groups = {};
+  for(const x of all) (groups[x.strasse] ||= []).push(x);
+  const list = Object.entries(groups).map(([road,items])=>{
+    const closed = items.filter(x=>x.art==="sperrung"), works = items.filter(x=>x.art==="baustelle"), warn = items.filter(x=>x.art==="warnung");
+    return {road, items, closed, works, warn, km:Math.min(...items.map(x=>x.km))};
+  }).sort((a,b)=>(b.closed.length>0)-(a.closed.length>0) || a.km-b.km);
+  const row = g => {
+    const parts = [g.closed.length && `${g.closed.length} ${g.closed.length>1?"Sperrungen":"Sperrung"}`,
+      g.warn.length && `${g.warn.length} ${g.warn.length>1?"Meldungen":"Meldung"}`,
+      g.works.length && `${g.works.length} ${g.works.length>1?"Baustellen":"Baustelle"}`].filter(Boolean).join(" · ");
+    const lead = (g.closed[0] || g.warn[0] || g.works[0]);
+    const leadTxt = [lead.titel.replace(/^[ABLK]\d+\s*[:]?\s*/,""), itemWhen(lead)].filter(Boolean).join(", ");
+    return `<details class="troad" data-road="${esc(g.road)}"><summary>
+      <span class="rbadge ${roadClass(g.road)}">${esc(g.road==="Ortsstraßen"?"Ort":g.road)}</span>
+      <span class="rtxt"><b>${parts}</b><small>${esc(leadTxt)}</small></span></summary>
+      <ul class="alist">${g.items.map(trafficItem).join("")}</ul></details>`;
+  };
+  const top = list.slice(0,6), more = list.slice(6);
   let h = `<h3>Straßen</h3>`;
-  h += top.length ? `<ul class="alist">${top.map(trafficItem).join("")}</ul>` : `<p class="pnote">Keine Sperrungen in der Nähe.</p>`;
-  if(rest.length) h += `<details><summary>${rest.length} weitere Baustellen und Sperrungen im Umkreis</summary><ul class="alist">${rest.map(trafficItem).join("")}</ul></details>`;
+  if(!list.length){ $("aroundTraffic").innerHTML = h + `<p class="pnote">Keine Baustellen oder Sperrungen in der Nähe.</p>`; return; }
+  h += trafficMap(all);
+  h += `<div class="tlegend"><span><i class="dot sperrung"></i>Sperrung</span><span><i class="dot baustelle"></i>Baustelle</span><span class="pnote">Tippe auf eine Straße für Details</span></div>`;
+  h += top.map(row).join("");
+  if(more.length) h += `<details class="tmore"><summary>${more.length} weitere Straßen</summary>${more.map(row).join("")}</details>`;
   h += `<p class="pnote">Quellen: Autobahn GmbH des Bundes; Verkehrsministerium BW / MobiData BW (dl-de/by-2-0)</p>`;
   $("aroundTraffic").innerHTML = h;
+  // Aufgeklappte Straße auf der Karte hervorheben
+  $("aroundTraffic").querySelectorAll("details.troad").forEach(el=>el.addEventListener("toggle",()=>{
+    const open = [...$("aroundTraffic").querySelectorAll("details.troad[open]")].map(e=>e.dataset.road);
+    $("tmap").classList.toggle("focus", open.length>0);
+    $("tmap").querySelectorAll("g[data-road]").forEach(g=>g.classList.toggle("on", open.includes(g.dataset.road)));
+  }));
 }
 function renderLinks(id, title, items, source){
   if(!items || !items.length) return;
