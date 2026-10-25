@@ -17,6 +17,8 @@ const ROUTES = {
   "/stadt": { maxAge: 3600, load: loadStadt },
   // Polizeimeldungen für Holzgerlingen aus dem Presseportal (nur Überschrift und Link)
   "/polizei": { maxAge: 900, load: loadPolizei },
+  // Blaulicht-Meldungen aus Holzgerlingen und Umgebung: Polizei, Bundespolizei, Feuerwehr (Titel, kurzer Anriss, Link)
+  "/region": { maxAge: 900, load: loadRegion },
   // Schönbuchbahn ab Holzgerlingen und Anschlüsse ab Böblingen, Echtzeit vom VVS (EFA)
   "/bahn": { maxAge: 60, load: loadBahn },
 };
@@ -232,6 +234,58 @@ async function loadBahn() {
     hinweise: bb.hinweise.filter((h) => /S1|RE|RB|Gäubahn|Böblingen/i.test(h.titel)).slice(0, 2),
   };
   return { stand: new Date().toISOString(), quelle: "VVS", abfahrten: hz.abfahrten.slice(0, 12), hinweise: hz.hinweise.slice(0, 3), boeblingen: anschluss };
+}
+
+/* ---------- Aus der Region (Presseportal / news aktuell) ---------- */
+// Nach dem Auftrag „Lokale Meldungen“ (scripts/fetch-news.mjs), hier im Worker statt als GitHub Action
+const REGION_FEEDS = [
+  // Ortsfeeds des Presseportals (liefern Meldungen aller Dienststellen zu diesem Ort)
+  ...["Holzgerlingen", "Böblingen", "Sindelfingen", "Weil im Schönbuch", "Altdorf", "Schönaich", "Waldenbuch", "Ehningen", "Hildrizhausen"]
+    .map((o) => `https://www.presseportal.de/rss/polizei/r/${encodeURIComponent(o)}.rss2`),
+  "https://www.presseportal.de/rss/dienststelle_116091.rss2", // Bundespolizeiinspektion Stuttgart (Bahnhöfe)
+  "https://www.presseportal.de/rss/dienststelle_164917.rss2", // Feuerwehr Böblingen
+];
+const REGION_PLACES = ["Holzgerlingen", "Altdorf", "Weil im Schönbuch", "Hildrizhausen", "Schönaich", "Waldenbuch", "Ehningen",
+  "Böblingen", "Sindelfingen", "Dagersheim", "Darmsheim", "Maichingen", "Magstadt", "Schönbuch"];
+const PLACE_RE = new RegExp(`(?<![\\wäöüß])(${REGION_PLACES.join("|")})(?![\\wäöüß])`, "i");
+// Nur Dienststellen, die für den Kreis Böblingen zuständig sind (es gibt z. B. mehrere „Altdorf“)
+const SENDER = [[/^POL-LB\b/i, "Polizei"], [/^BPOLI S\b/i, "Bundespolizei"], [/^FW[ -]/i, "Feuerwehr"]];
+
+function plain(s = "") {
+  return decode(s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+
+async function loadRegion() {
+  const cutoff = Date.now() - 7 * 864e5, seen = new Set(), items = [];
+  const feeds = await Promise.allSettled(REGION_FEEDS.map((u) => get(u, "text")));
+  for (const f of feeds) {
+    if (f.status !== "fulfilled") continue;
+    for (const m of f.value.matchAll(/<item\b[\s\S]*?<\/item>/gi)) {
+      const tag = (n) => (m[0].match(new RegExp(`<${n}[^>]*>([\\s\\S]*?)</${n}>`, "i")) || [])[1] || "";
+      const link = plain(tag("link")), raw = plain(tag("title")), date = new Date(plain(tag("pubDate")));
+      if (!link || seen.has(link) || isNaN(date) || date < cutoff) continue;
+      const sender = SENDER.find(([re]) => re.test(raw));
+      if (!sender) continue;
+      const title = raw.replace(/^(POL-LB|BPOLI S|FW [^:]+)\s*:\s*/i, "");
+      const text = plain(tag("description"));
+      const hit = title.match(PLACE_RE) || text.slice(0, 400).match(PLACE_RE);
+      if (!hit) continue;
+      seen.add(link);
+      const place = REGION_PLACES.find((p) => p.toLowerCase() === hit[1].toLowerCase()) || hit[1];
+      let teaser = text.replace(/^[^(]*\(ots\)\s*-\s*/i, "").replace(/(Rückfragen bitte an|Original-Content von):[\s\S]*$/i, "").trim();
+      if (teaser.length > 160) teaser = teaser.slice(0, teaser.lastIndexOf(" ", 160)) + " …";
+      items.push({
+        source: sender[1],
+        place,
+        title: title.replace(new RegExp(`^${place}\\s*[:/-]\\s*`, "i"), ""),
+        teaser,
+        date: date.toISOString(),
+        url: link,
+      });
+    }
+  }
+  items.sort((a, b) => b.date.localeCompare(a.date));
+  return { updated: new Date().toISOString(), attribution: "Quelle: Presseportal.de / news aktuell – Original-Content der jeweiligen Behörde", items: items.slice(0, 15) };
 }
 
 function decode(s) {

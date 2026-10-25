@@ -218,6 +218,18 @@ button{font:inherit;color:inherit}
 .tinfo{background:var(--warn-bg);color:var(--warn-ink);border-radius:12px;padding:10px 12px;margin-top:10px;font-size:.88rem}
 .around .tinfo summary{cursor:pointer;font-weight:700;color:inherit;padding:0}
 .tinfo p{margin:8px 0 0;white-space:pre-line}
+.news{display:flex;flex-direction:column;gap:8px}
+.nlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.nlist li{border-bottom:1px solid var(--line)}
+.nlist li:last-child{border-bottom:0}
+.nlist a{display:flex;flex-direction:column;gap:2px;padding:10px 0;color:inherit;text-decoration:none}
+.nlist b{font-weight:600;font-size:.95rem;line-height:1.3}
+.nmeta{display:flex;gap:8px;align-items:center;font-size:.78rem;color:var(--muted)}
+.ntag{font-weight:700;font-size:.72rem;border:1px solid var(--line);border-radius:5px;padding:0 6px;color:var(--fg)}
+.nlist li.home .ntag{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+.nteaser{font-size:.85rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nmore summary{cursor:pointer;font-size:.85rem;font-weight:700;color:var(--accent);padding:4px 0}
+.news .pnote a{color:var(--accent)}
 .troad{border-bottom:1px solid var(--line)}
 .around .troad summary{display:block;list-style:none;cursor:pointer;padding:12px 0;color:var(--fg);font-weight:400;font-size:1rem;-webkit-tap-highlight-color:transparent}
 .around .troad summary::-webkit-details-marker{display:none}
@@ -304,7 +316,6 @@ footer a{color:inherit}
       <i style="background:#f2c200"></i>10 <i style="background:#e5482b"></i>30</div>
   </section>
 
-
   <section aria-labelledby="dh" style="display:flex;flex-direction:column;gap:6px">
     <h2 id="dh">7 Tage</h2>
     <div class="days num" id="days"></div>
@@ -315,7 +326,13 @@ footer a{color:inherit}
     <div id="aroundTrain" hidden></div>
     <div id="aroundTraffic"><h3>Straßen</h3><p class="pnote">Wird geladen …</p></div>
     <div id="aroundTown" hidden></div>
-    <div id="aroundPolice" hidden></div>
+  </section>
+
+  <section class="news" id="news" aria-labelledby="nh" hidden>
+    <h2 id="nh">Aus der Region</h2>
+    <ul class="nlist" id="newsList"></ul>
+    <details class="nmore" id="newsMore" hidden><summary>Mehr anzeigen</summary><ul class="nlist" id="newsMoreList"></ul></details>
+    <p class="pnote" id="newsSource"></p>
   </section>
 
   <footer>Daten: Deutscher Wetterdienst (DWD), abgerufen über <a href="https://brightsky.dev" target="_blank" rel="noopener">Bright Sky</a>. Modell- und Stationswerte, Radar-Nowcast bis etwa 2 Stunden. Prototyp, keine amtliche Warnplattform. Karte © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap-Mitwirkende</a>.</footer>
@@ -780,7 +797,6 @@ async function loadPollen(){
 
 /* ---------- Rund um Holzgerlingen (über das eigene Backend) ---------- */
 const BACKEND = "https://api.schoenbuchwetter.workers.dev";
-const SHOW_POLICE = true; // Polizeimeldungen nur Überschrift + Link; vor öffentlichem Start Erlaubnis bei news aktuell klären
 const fmtDate = new Intl.DateTimeFormat("de-DE",{day:"numeric",month:"short",timeZone:TZ});
 const fmtDateY = new Intl.DateTimeFormat("de-DE",{day:"numeric",month:"short",year:"numeric",timeZone:TZ});
 const shortDate = d => (d.getFullYear()===new Date().getFullYear() ? fmtDate : fmtDateY).format(d);
@@ -797,7 +813,50 @@ function loadAround(){
   // Rathaus: Die Stadtseite ist selten aktuell, daher nur der Kanal des Bürgermeisters
   $("aroundTown").innerHTML = `<h3>Aus dem Rathaus</h3><ul class="alist"><li><i class="dot"></i><div><a href="${MAYOR_WA}" target="_blank" rel="noopener"><b>Bürgermeister Delakos auf WhatsApp</b></a><small>Aktuelle Infos direkt aus dem Rathaus</small></div></li></ul>`;
   $("aroundTown").hidden = false;
-  if(SHOW_POLICE) getJSON(`${BACKEND}/polizei`).then(d=>renderLinks("aroundPolice","Polizei",d.eintraege.slice(0,3),"Quelle: Polizeipräsidium Ludwigsburg, presseportal.de")).catch(()=>{});
+  renderNews();
+}
+
+/* Aus der Region: Blaulicht-Meldungen (Polizei, Bundespolizei, Feuerwehr) über /region.
+   Nur Titel, kurzer Anriss und Link; Feed-Inhalte sind fremde Daten, daher nur textContent.
+   Vor öffentlichem Start Erlaubnis bei news aktuell klären. */
+const NEWS_VISIBLE = 5;
+const fmtRel = new Intl.RelativeTimeFormat("de-DE", {numeric:"auto"});
+function relTime(iso){
+  const min = Math.round((Date.now() - Date.parse(iso)) / 6e4);
+  if(min < 60) return min < 2 ? "gerade eben" : `vor ${min} Min.`;
+  if(min < 24*60) return `vor ${Math.round(min/60)} Std.`;
+  const days = Math.round((new Date(dayKey(new Date())) - new Date(dayKey(new Date(iso)))) / 864e5);
+  return days <= 1 ? fmtRel.format(-days, "day") : `vor ${days} Tagen`;
+}
+function newsItem(x){
+  const li = document.createElement("li");
+  if(x.place === "Holzgerlingen") li.className = "home";
+  const a = document.createElement("a");
+  a.href = x.url; a.target = "_blank"; a.rel = "noopener";
+  const meta = document.createElement("div"); meta.className = "nmeta";
+  const tag = document.createElement("span"); tag.className = "ntag"; tag.textContent = x.place;
+  const time = document.createElement("span"); time.textContent = `${relTime(x.date)} · ${x.source}`;
+  meta.append(tag, time);
+  const title = document.createElement("b"); title.textContent = x.title;
+  const teaser = document.createElement("span"); teaser.className = "nteaser"; teaser.textContent = x.teaser;
+  a.append(meta, title, teaser);
+  li.append(a);
+  return li;
+}
+async function renderNews(){
+  let d;
+  try{ d = await getJSON(`${BACKEND}/region?t=${Date.now()}`); }catch{ return; } // ohne Daten bleibt der Bereich aus
+  const items = (d && d.items) || [];
+  if(!items.length){ $("news").hidden = true; return; }
+  $("newsList").replaceChildren(...items.slice(0, NEWS_VISIBLE).map(newsItem));
+  $("newsMoreList").replaceChildren(...items.slice(NEWS_VISIBLE).map(newsItem));
+  $("newsMore").hidden = items.length <= NEWS_VISIBLE;
+  const src = $("newsSource");
+  const more = document.createElement("a");
+  more.href = "https://www.szbz.de/nachrichten/ressort/kreis-bb"; more.target = "_blank"; more.rel = "noopener";
+  more.textContent = "Mehr Lokalnachrichten bei der SZ/BZ";
+  src.replaceChildren(document.createTextNode((d.attribution || "") + " · "), more);
+  $("news").hidden = false;
 }
 
 /* Schönbuchbahn: nächste Abfahrten ab Holzgerlingen Bahnhof (VVS, Echtzeit); vor öffentlichem Start Nutzung mit VVS klären */
@@ -920,11 +979,6 @@ function renderTraffic(d){
     $("tmap").classList.toggle("focus", open.length>0);
     $("tmap").querySelectorAll("g[data-road]").forEach(g=>g.classList.toggle("on", open.includes(g.dataset.road)));
   }));
-}
-function renderLinks(id, title, items, source){
-  if(!items || !items.length) return;
-  $(id).innerHTML = `<h3>${title}</h3><ul class="alist">${items.map(x=>`<li><i class="dot"></i><div><a href="${esc(x.link)}" target="_blank" rel="noopener"><b>${esc(x.titel)}</b></a>${x.datum?`<small>${fmtDate.format(new Date(x.datum))}</small>`:""}</div></li>`).join("")}</ul><p class="pnote">${source}</p>`;
-  $(id).hidden = false;
 }
 
 /* ---------- Push-Warnungen ---------- */
