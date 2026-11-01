@@ -324,7 +324,7 @@ footer a{color:inherit}
   <section class="around" aria-labelledby="ah">
     <h2 id="ah">Rund um Holzgerlingen</h2>
     <div id="aroundTrain" hidden></div>
-    <div id="aroundTraffic"><h3>Straßen</h3><p class="pnote">Wird geladen …</p></div>
+    <div id="aroundTraffic"><h3>Sperrungen</h3><p class="pnote">Wird geladen …</p></div>
     <div id="aroundTown" hidden></div>
   </section>
 
@@ -812,7 +812,7 @@ function loadAround(){
   clearInterval(trainTimer);
   trainTimer = setInterval(()=>{ if(!document.hidden) loadTrain(); }, 60e3); // Abfahrten jede Minute auffrischen
   getJSON(`${BACKEND}/verkehr`).then(renderTraffic).catch(()=>{
-    $("aroundTraffic").innerHTML = `<h3>Straßen</h3><p class="pnote">Verkehrsmeldungen konnten gerade nicht geladen werden.</p>`;
+    $("aroundTraffic").innerHTML = `<h3>Sperrungen</h3><p class="pnote">Verkehrsmeldungen konnten gerade nicht geladen werden.</p>`;
   });
   // Rathaus: Die Stadtseite ist selten aktuell, daher nur der Kanal des Bürgermeisters
   $("aroundTown").innerHTML = `<h3>Aus dem Rathaus</h3><ul class="alist"><li><i class="dot"></i><div><a href="${MAYOR_WA}" target="_blank" rel="noopener"><b>Bürgermeister Delakos auf WhatsApp</b></a><small>Aktuelle Infos direkt aus dem Rathaus</small></div></li></ul>`;
@@ -939,7 +939,7 @@ function trafficMap(items){
   }).join("");
   const s = S/2/TMAP.km;
   const rings = [5,10].map(r=>`<circle class="tm-ring" cx="${S/2}" cy="${S/2}" r="${r*s}"/>`).join("");
-  return `<svg class="tmap" id="tmap" viewBox="0 0 ${S} ${S}" role="img" aria-label="Karte der Sperrungen und Baustellen rund um Holzgerlingen">${trafficBase()}${rings}${shapes}${places}<text class="tm-scale" x="${S/2}" y="${S/2+5*s+11}" text-anchor="middle">5 km</text></svg>`;
+  return `<svg class="tmap" id="tmap" viewBox="0 0 ${S} ${S}" role="img" aria-label="Karte der Sperrungen rund um Holzgerlingen">${trafficBase()}${rings}${shapes}${places}<text class="tm-scale" x="${S/2}" y="${S/2+5*s+11}" text-anchor="middle">5 km</text></svg>`;
 }
 function renderTraffic(d){
   const all = (d.eintraege||[]).filter(x=>x.art!=="warnung" || x.km<=12);
@@ -954,7 +954,8 @@ function renderTraffic(d){
     const parts = [g.closed.length && `${g.closed.length} ${g.closed.length>1?"Sperrungen":"Sperrung"}`,
       g.warn.length && `${g.warn.length} ${g.warn.length>1?"Meldungen":"Meldung"}`,
       g.works.length && `${g.works.length} ${g.works.length>1?"Baustellen":"Baustelle"}`].filter(Boolean).join(" · ");
-    const lead = (g.closed[0] || g.warn[0] || g.works[0]);
+    const isNow = x => !x.von || Date.parse(x.von) <= Date.now();
+    const lead = g.closed.find(isNow) || g.closed[0] || g.warn[0] || g.works[0]; // zuerst, was jetzt schon gilt
     const leadTxt = [lead.titel.replace(/^[ABLK]\d+\s*[:]?\s*/,""), itemWhen(lead)].filter(Boolean).join(", ");
     return `<details class="troad" data-road="${esc(g.road)}"><summary><div class="trow">
       <span class="rbadge ${roadClass(g.road)}">${esc(g.road==="Ortsstraßen"?"Ort":g.road)}</span>
@@ -962,10 +963,10 @@ function renderTraffic(d){
       <ul class="alist">${g.items.map(trafficItem).join("")}</ul></details>`;
   };
   const top = list.slice(0,6), more = list.slice(6);
-  let h = `<h3>Straßen</h3>`;
-  if(!list.length){ $("aroundTraffic").innerHTML = h + `<p class="pnote">Keine Baustellen oder Sperrungen in der Nähe.</p>`; return; }
+  let h = `<h3>Sperrungen</h3>`;
+  if(!list.length){ $("aroundTraffic").innerHTML = h + `<p class="pnote">Keine Sperrungen in der Nähe.</p>`; return; }
   h += trafficMap(all);
-  h += `<div class="tlegend"><span><i class="dot sperrung"></i>Sperrung</span><span><i class="dot baustelle"></i>Baustelle</span><span class="pnote">Tippe auf die Karte oder eine Straße</span></div>`;
+  h += `<div class="tlegend"><span><i class="dot sperrung"></i>Gesperrt</span><span class="pnote">Tippe auf die Karte oder eine Straße</span></div>`;
   h += top.map(row).join("");
   if(more.length) h += `<details class="tmore"><summary>${more.length} weitere Straßen</summary>${more.map(row).join("")}</details>`;
   h += `<p class="pnote">Quellen: Autobahn GmbH des Bundes; Verkehrsministerium BW / MobiData BW (dl-de/by-2-0)</p>`;

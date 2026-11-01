@@ -11,7 +11,7 @@ const UA = { "User-Agent": "schoenbuch-wetter (https://github.com/leifkr-source/
 const ROUTES = {
   // DWD Pollenflug-Gefahrenindex, wird einmal täglich gegen 11 Uhr aktualisiert
   "/pollen": { maxAge: 3600, load: () => passThrough("https://opendata.dwd.de/climate_environment/health/alerts/s31fg.json") },
-  // Baustellen und Sperrungen: Autobahn GmbH (A81, A8, A831) und MobiData BW (Landes-, Kreis-, Gemeindestraßen)
+  // Nur Sperrungen und gesperrte Ab-/Auffahrten: Autobahn GmbH (A81, A8, A831) und MobiData BW (Landes-, Kreis-, Gemeindestraßen)
   "/verkehr": { maxAge: 900, load: loadVerkehr },
   // Meldungen von holzgerlingen.de (nur Überschrift und Link)
   "/stadt": { maxAge: 3600, load: loadStadt },
@@ -82,8 +82,41 @@ function roadOf(...texts) {
 
 // „Ende: 30.09.27 um 00:00 Uhr“ → ISO-Zeit
 function parseEnde(lines) {
-  const m = (lines || []).join(" ").match(/Ende: (\d\d)\.(\d\d)\.(\d\d) um (\d\d):(\d\d)/);
-  return m ? `20${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}:00` : null;
+  const m = (lines || []).join(" ").match(/(?:Ende: |bis zum )(\d\d)\.(\d\d)\.(\d\d) (?:um )?(\d\d):(\d\d)/);
+  if (!m) return null;
+  const end = m[4] === "24" ? "23:59" : `${m[4]}:${m[5]}`; // „24:00 Uhr“ kommt in den Daten vor
+  return `20${m[3]}-${m[2]}-${m[1]}T${end}:00`;
+}
+
+// „Die Baustelle ist zu folgenden Zeiträumen gültig: 06.11.26 20:00 bis zum 07.11.26 24:00 Uhr.“ → nächstes Zeitfenster
+function nextWindow(lines) {
+  const iso = (d, mo, y, h, mi) => `20${y}-${mo}-${d}T${h === "24" ? "23:59" : `${h}:${mi}`}:00`;
+  const re = /(\d\d)\.(\d\d)\.(\d\d) (\d\d):(\d\d) bis zum (\d\d)\.(\d\d)\.(\d\d) (\d\d):(\d\d)/g;
+  for (const m of (lines || []).join(" ").matchAll(re)) {
+    const bis = iso(m[6], m[7], m[8], m[9], m[10]);
+    if (Date.parse(bis) >= Date.now()) return { von: iso(m[1], m[2], m[3], m[4], m[5]), bis };
+  }
+  return null;
+}
+
+// Autobahn: wirklich gesperrt? Auch die Dienste „closure“ und „roadworks“ enthalten Abschnitte, auf denen noch
+// Fahrstreifen frei sind. Gesperrt ist nur, was keinen Pfeil (offenen Fahrstreifen) hat, oder im Titel „Vollsperrung“ nennt.
+function fullyClosed(x) {
+  const sym = x.impact?.symbols || [];
+  return x.isBlocked === "true" || /vollsperr/i.test(x.title || "") || (sym.includes("CLOSED") && !sym.some((t) => t.startsWith("ARROW")));
+}
+
+// Abfahrten und Auffahrten verständlich benennen, statt mit dem Namen der Baumaßnahme
+function closureLabel(x, info) {
+  const sub = (x.subtitle || "").trim(), first = info[0] || "";
+  const as = sub.match(/AS (.+?)\s*\((.*)\)/);
+  const kind = /^Abfahrt/.test(first) ? "Abfahrt" : /Auffahrt/.test(first) ? "Auffahrt" : /Abfahrt/.test(first) ? "Abfahrt" : "";
+  if (kind && as) return { titel: `${kind} ${as[1]} gesperrt`, richtung: as[2] };
+  if (kind) return { titel: `${first.replace(/^Von .* nach /, "")} gesperrt`, richtung: "" };
+  const between = first.match(/hinter AS (.+?) und (?:[\d.]+ km vor )?(?:AS |AK )?(.+?)(?: nach .*)?$/);
+  if (!x.title.includes("|") && between) return { titel: `Zwischen ${between[1]} und ${between[2]} gesperrt`, richtung: sub };
+  if (x.title.includes("|")) return { titel: x.title.replace(/\s*\|\s*/, ": "), richtung: sub };
+  return { titel: x.title, richtung: sub };
 }
 
 /* ---------- Verkehr ---------- */
@@ -94,7 +127,7 @@ async function loadVerkehr() {
 
   // Autobahn GmbH des Bundes
   const roads = ["A81", "A8", "A831"];
-  const services = ["closure", "roadworks", "warning"];
+  const services = ["closure", "roadworks"];
   const results = await Promise.allSettled(
     roads.flatMap((road) => services.map((s) => get(`https://verkehr.autobahn.de/o/autobahn/${road}/services/${s}`).then((d) => d[s] || [])))
   );
@@ -104,20 +137,20 @@ async function loadVerkehr() {
     for (const x of r.value) {
       const lat = +x.coordinate?.lat, lon = +x.coordinate?.long;
       if (!(km(lat, lon) <= 15)) continue;
-      const bis = parseEnde(x.description);
-      if (!aktiv(x.startTimestamp, bis)) continue;
-      const art = x.display_type === "WARNING" ? "warnung" : x.display_type === "CLOSURE" || x.isBlocked === "true" ? "sperrung" : "baustelle";
+      const win = nextWindow(x.description);
+      const von = x.startTimestamp || win?.von || null, bis = win?.bis || parseEnde(x.description);
+      if (!aktiv(von, bis)) continue;
+      if (!fullyClosed(x)) continue; // nur echte Sperrungen, keine Baustellen mit freien Fahrstreifen
       const info = (x.description || []).filter((l) => l && !/^(Zeitraum|Beginn|Ende|Länge|\(Ende|Die Baustelle)/.test(l) && !/^\d\d\.\d\d\.\d\d /.test(l));
       if (seenIds.has(x.identifier)) continue;
       seenIds.add(x.identifier);
       items.push({
         quelle: "Autobahn",
         strasse: roadOf(x.title),
-        art,
-        titel: x.title.replace(/\s*\|\s*/, ": "),
-        richtung: (x.subtitle || "").trim(),
+        art: "sperrung",
+        ...closureLabel(x, info),
         info: info[info.length - 1] || "",
-        von: x.startTimestamp || null,
+        von,
         bis,
         km: Math.round(km(lat, lon) * 10) / 10,
         geo: simplify(x.geometry) || [[lon, lat]],
@@ -132,13 +165,13 @@ async function loadVerkehr() {
       const p = firstPoint(f.geometry);
       if (!p || !(km(p.lat, p.lon) <= 8)) continue;
       const x = f.properties || {};
-      if (!aktiv(x.starttime, x.endtime)) continue;
+      if (x.type !== "ROAD_CLOSED" || !aktiv(x.starttime, x.endtime)) continue;
       const street = x.street && x.street !== "Gemeindestraße" ? x.street : "";
       items.push({
         quelle: "MobiData BW",
         strasse: roadOf(x.street, x.description),
-        art: x.type === "ROAD_CLOSED" ? "sperrung" : "baustelle",
-        titel: (x.description || "Baustelle").replace(/^keine Beschreibung vorhanden\s*/i, ""),
+        art: "sperrung",
+        titel: (x.description || "Sperrung").replace(/^keine Beschreibung vorhanden\s*/i, ""),
         richtung: street,
         info: "",
         von: x.starttime || null,
@@ -149,15 +182,15 @@ async function loadVerkehr() {
     }
   } catch {}
 
-  // Doppelte Einträge (gleicher Titel) zusammenfassen, Sperrungen zuerst, dann nach Entfernung
+  // Doppelte Einträge (gleicher Titel, z. B. mehrere Bauphasen) zusammenfassen: die früheste zählt; nach Entfernung
   const seen = new Set();
-  const order = { sperrung: 0, warnung: 1, baustelle: 2 };
   const list = items
-    .sort((a, b) => order[a.art] - order[b.art] || a.km - b.km)
+    .sort((a, b) => (a.von || "").localeCompare(b.von || ""))
     .filter((x) => {
       const k = x.titel + "|" + x.richtung;
       return seen.has(k) ? false : (seen.add(k), true);
-    });
+    })
+    .sort((a, b) => a.km - b.km);
   return { stand: new Date().toISOString(), quellen: ["Autobahn GmbH des Bundes", "Verkehrsministerium BW / MobiData BW (dl-de/by-2-0)"], eintraege: list };
 }
 
