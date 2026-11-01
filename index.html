@@ -56,7 +56,7 @@ button{font:inherit;color:inherit}
 .top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
 .place{font-size:1.25rem;font-weight:700}
 .place small{display:block;font-family:var(--body);font-weight:400;font-size:.8rem;color:var(--muted)}
-.stamp{font-size:.8rem;color:var(--muted);text-align:right}
+.stamp{font-size:.8rem;color:var(--muted);text-align:right;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .demo{background:var(--warn-bg);color:var(--warn-ink);border-radius:10px;padding:10px 14px;font-size:.88rem}
 
 /* Hero */
@@ -421,7 +421,10 @@ async function load(){
   loadAround();
   renderAlerts(al.status==="fulfilled" ? al.value.alerts : (demo ? demoAlerts(now) : null));
   initRadar(rd.status==="fulfilled" ? rd.value : demoRadar(now), rd.status!=="fulfilled");
-  $("stamp").textContent = (demo ? "Beispiel · " : navigator.onLine ? "Stand " : "Offline · Stand ") + fmtT.format(current.timestamp ? new Date(current.timestamp) : now) + " Uhr";
+  // Online zählt, wann zuletzt geladen wurde; offline, wie alt die gespeicherten Daten sind
+  $("stamp").textContent = demo ? `Beispiel · ${fmtT.format(now)} Uhr`
+    : navigator.onLine ? `Aktualisiert ${fmtT.format(now)} Uhr ↻`
+    : `Offline · Stand ${fmtT.format(current.timestamp ? new Date(current.timestamp) : now)} Uhr`;
 }
 
 /* ---------- Jetzt ---------- */
@@ -740,6 +743,7 @@ function renderOutWindow(h, now, evening){
 
 /* ---------- Morgen-Check fürs Auto ---------- */
 function renderCar(h, now){
+  $("car").hidden = true; // beim Auffrischen nichts Veraltetes stehen lassen
   const today = hourOf(now) < 8;
   const key = dayKey(today ? now : new Date(now.getTime()+864e5));
   const morning = h.filter(x=>{ const t=new Date(x.timestamp), hh=hourOf(t); return dayKey(t)===key && hh>=5 && hh<=8; });
@@ -845,7 +849,7 @@ function newsItem(x){
 }
 async function renderNews(){
   let d;
-  try{ d = await getJSON(`${BACKEND}/region?t=${Date.now()}`); }catch{ return; } // ohne Daten bleibt der Bereich aus
+  try{ d = await getJSON(`${BACKEND}/region`); }catch{ return; } // ohne Daten bleibt der Bereich aus
   const items = (d && d.items) || [];
   if(!items.length){ $("news").hidden = true; return; }
   $("newsList").replaceChildren(...items.slice(0, NEWS_VISIBLE).map(newsItem));
@@ -1075,7 +1079,31 @@ function demoRadar(now){
   return {radar:frames, latlon_position:{x:20,y:20}};
 }
 
-load().catch(err=>{ console.error(err); $("stamp").textContent="Fehler beim Laden"; });
+/* ---------- Laden und Auffrischen ----------
+   Vom Home-Bildschirm gestartet lädt iOS die Seite nicht neu, sondern holt sie aus dem Hintergrund zurück.
+   Deshalb beim Zurückkehren selbst auffrischen; nach längerer Pause die ganze Seite, damit auch neue Versionen ankommen. */
+const REFRESH_AFTER = 3*6e4, RELOAD_AFTER = 60*6e4;
+let lastLoad = 0, loading = false;
+async function refresh(){
+  if(loading) return;
+  loading = true;
+  $("stamp").textContent = "Lädt …";
+  try{ if(timer) stop(); await load(); lastLoad = Date.now(); }
+  catch(err){ console.error(err); $("stamp").textContent = "Fehler beim Laden"; }
+  finally{ loading = false; }
+}
+function onReturn(){
+  if(document.hidden) return;
+  const age = Date.now() - lastLoad;
+  if(age > RELOAD_AFTER && navigator.onLine) location.reload();
+  else if(age > REFRESH_AFTER) refresh();
+  else loadTrain();
+}
+document.addEventListener("visibilitychange", onReturn);
+addEventListener("pageshow", e=>{ if(e.persisted) onReturn(); });
+addEventListener("online", ()=>refresh());
+$("stamp").addEventListener("click", ()=>refresh()); // Antippen lädt von Hand neu
+refresh();
 </script>
 </body>
 </html>
