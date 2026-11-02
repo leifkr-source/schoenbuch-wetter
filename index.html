@@ -858,13 +858,13 @@ function loadAround(){
   $("aroundTown").hidden = false;
   renderNews();
   getJSON(`${BACKEND}/muell`).then(renderWaste).catch(()=>{});
-  getJSON(`${BACKEND}/sprit`).then(renderFuel).catch(()=>{});
+  getJSON(`${BACKEND}/sprit`).then(renderFuel).catch(()=>renderFuel({}));
   getJSON(`${BACKEND}/luft`).then(renderAir).catch(()=>{});
   getJSON(`${BACKEND}/waldbrand`).then(renderFire).catch(()=>{});
   getJSON(`${BACKEND}/termine`).then(renderEvents).catch(()=>{});
 }
 
-/* Müll: nächste Abholung, nur sichtbar wenn der Kalender hinterlegt ist */
+/* Müll: nächste Abholung(en) laut Stadt Holzgerlingen, gilt für 120- und 240-Liter-Tonnen */
 function renderWaste(d){
   const list = d.eintraege || [];
   if(!list.length) return;
@@ -874,13 +874,22 @@ function renderWaste(d){
   const el = $("aroundWaste");
   el.innerHTML = `<h3>Müll</h3><p class="pnote"><span class="wnext"></span></p>`;
   el.querySelector(".wnext").textContent = `${when}: ${next}`;
+  const after = list.find(x=>x.datum!==first);
+  const src = document.createElement("p"); src.className = "pnote";
+  src.textContent = (after ? `Danach ${fmtD.format(new Date(after.datum+"T12:00"))}, ${fmtDate.format(new Date(after.datum+"T12:00"))}: ${after.art}. ` : "") + "Quelle: Stadt Holzgerlingen";
+  el.append(src);
   el.hidden = false;
 }
 
 /* Spritpreise: die Tankstellen in Holzgerlingen; günstigster Preis je Sorte hervorgehoben */
+const FUEL_LINK = "https://www.benzinpreis-aktuell.de/71088-holzgerlingen-aktuelle-benzinpreise";
 function renderFuel(d){
   const list = d.stationen || [];
-  if(!list.length) return;
+  if(!list.length){ // ohne Tankerkönig-Schlüssel nur der Link zur Preisliste
+    $("aroundFuel").innerHTML = `<h3>Spritpreise</h3><ul class="alist"><li><i class="dot"></i><div><a href="${FUEL_LINK}" target="_blank" rel="noopener"><b>Aktuelle Preise in Holzgerlingen</b></a><small>Aral, JET und HEM, bei benzinpreis-aktuell.de</small></div></li></ul>`;
+    $("aroundFuel").hidden = false;
+    return;
+  }
   const sorts = ["e5","e10","diesel"], low = {};
   for(const k of sorts) low[k] = Math.min(...list.filter(x=>x.offen && x[k]).map(x=>x[k]));
   const price = p => p ? p.toFixed(2).replace(".",",") : "–";

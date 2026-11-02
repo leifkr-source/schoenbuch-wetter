@@ -23,7 +23,7 @@ const ROUTES = {
   "/bahn": { maxAge: 60, load: loadBahn },
   // Spritpreise der Tankstellen in Holzgerlingen (Tankerkönig, CC BY 4.0; Schlüssel als Secret TANKERKOENIG_KEY)
   "/sprit": { maxAge: 300, load: loadSprit },
-  // Nächste Müll-Abholungen (ICS-Link des Abfuhrkalenders als Secret MUELL_ICS_URL, enthält die Adresse)
+  // Nächste Müll-Abholungen laut Stadt Holzgerlingen
   "/muell": { maxAge: 3600, load: loadMuell },
   // Luftqualität an der Messstation Gärtringen (Umweltbundesamt)
   "/luft": { maxAge: 1800, load: loadLuft },
@@ -345,20 +345,38 @@ async function loadSprit(env) {
   return { stand: new Date().toISOString(), quelle: "MTS-K über Tankerkönig (CC BY 4.0)", stationen };
 }
 
-/* ---------- Müllkalender (ICS) ---------- */
-async function loadMuell(env) {
-  if (!env.MUELL_ICS_URL) return { eintraege: [] };
-  const ics = (await get(env.MUELL_ICS_URL, "text")).replace(/\r?\n[ \t]/g, "");
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin" }).format(new Date());
-  const eintraege = [];
-  for (const m of ics.matchAll(/BEGIN:VEVENT([\s\S]*?)END:VEVENT/g)) {
-    const d = m[1].match(/DTSTART[^:]*:(\d{4})(\d\d)(\d\d)/), t = m[1].match(/SUMMARY[^:]*:(.*)/);
-    if (!d || !t) continue;
-    const datum = `${d[1]}-${d[2]}-${d[3]}`;
-    if (datum >= today) eintraege.push({ datum, art: t[1].trim().replace(/\\,/g, ",") });
+/* ---------- Müllkalender ---------- */
+// Abholtermine von holzgerlingen.de: für die ganze Stadt gleich (120- und 240-Liter-Tonnen), keine Adresse nötig
+const MONATE = [/^Januar/, /^Februar/, /^M.{0,8}rz/, /^April/, /^Mai/, /^Juni/, /^Juli/, /^August/, /^September/, /^Oktober/, /^November/, /^Dezember/];
+const MUELL_ARTEN = [[/^Bio/, "Bioabfall"], [/^Restm/, "Restmüll"], [/^Altpapier/, "Altpapier"], [/^Elektro/, "Elektroschrott"]]; // Wertstoffe bewusst nicht (Leifs Wunsch)
+
+function parseAbholtermine(html, jahr) {
+  const start = html.search(/Terminübersicht|Termin.{0,8}bersicht/);
+  const tokens = html.slice(start < 0 ? 0 : start).replace(/<(script|style)[\s\S]*?<\/\1>/g, "").split(/<[^>]+>/).map((t) => t.trim()).filter(Boolean);
+  const out = [];
+  let monat = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (out.length && /^zur.{0,8}ck$/i.test(t)) break;
+    const m = MONATE.findIndex((re) => re.test(t) && t.length <= 12);
+    if (m >= 0) { monat = m; continue; }
+    if (monat >= 0 && /^\d\d$/.test(t)) {
+      const art = MUELL_ARTEN.find(([re]) => re.test(tokens[i + 1] || ""));
+      if (art) { out.push({ datum: `${jahr}-${String(monat + 1).padStart(2, "0")}-${t}`, art: art[1] }); i++; }
+    }
   }
-  eintraege.sort((a, b) => a.datum.localeCompare(b.datum));
-  return { eintraege: eintraege.slice(0, 8) };
+  return out;
+}
+
+// Die Seite nennt kein Jahr und ignoriert ?y=, sie zeigt immer ihre aktuelle Liste. Damit nicht im Januar die alten
+// Termine als neue gelten: Jahr von Hand hochsetzen, sobald die Stadt die neuen Termine veröffentlicht hat.
+const MUELL_JAHR = 2026;
+async function loadMuell() {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin" }).format(new Date());
+  if (+today.slice(0, 4) !== MUELL_JAHR) return { eintraege: [] };
+  const html = await get("https://www.holzgerlingen.de/de/verwaltung-politik/abfallwirtschaft/abholtermine.php", "text");
+  const liste = parseAbholtermine(html, MUELL_JAHR);
+  return { quelle: "Stadt Holzgerlingen", eintraege: liste.filter((x) => x.datum >= today).slice(0, 8) };
 }
 
 /* ---------- Luftqualität ---------- */
@@ -441,6 +459,6 @@ export default {
 
   // Alle 15 Minuten: neue Warnungen als Push-Mitteilung verschicken
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(checkAndNotify(env, HOME, loadVerkehr, loadBahn, () => loadMuell(env)));
+    ctx.waitUntil(checkAndNotify(env, HOME, loadVerkehr, loadBahn, loadMuell));
   },
 };
