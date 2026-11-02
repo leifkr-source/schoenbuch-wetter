@@ -65,7 +65,7 @@ async function sendTo(env, key, subscription, message) {
   const { endpoint, headers, body } = await buildPushHTTPRequest({
     privateJWK: JSON.parse(env.VAPID_PRIVATE_JWK),
     subscription,
-    message: { payload: { ...message, url: PAGE }, adminContact: "https://github.com/leifkr-source/schoenbuch-wetter", options: { ttl: 6 * 3600, urgency: "high", topic: message.tag?.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) } },
+    message: { payload: { ...message, url: PAGE }, adminContact: "https://github.com/leifkr-source/schoenbuch-wetter", options: { ttl: 6 * 3600, urgency: "high" } }, // kein „topic“: Apple lehnt es mit BadWebPushTopic ab
   });
   const r = await fetch(endpoint, { method: "POST", headers, body });
   if (!r.ok) console.log("Push", r.status, await r.text().catch(() => ""));
