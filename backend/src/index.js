@@ -21,6 +21,18 @@ const ROUTES = {
   "/region": { maxAge: 900, load: loadRegion },
   // Schönbuchbahn ab Holzgerlingen und Anschlüsse ab Böblingen, Echtzeit vom VVS (EFA)
   "/bahn": { maxAge: 60, load: loadBahn },
+  // Spritpreise der Tankstellen in Holzgerlingen (Tankerkönig, CC BY 4.0; Schlüssel als Secret TANKERKOENIG_KEY)
+  "/sprit": { maxAge: 300, load: loadSprit },
+  // Nächste Müll-Abholungen (ICS-Link des Abfuhrkalenders als Secret MUELL_ICS_URL, enthält die Adresse)
+  "/muell": { maxAge: 3600, load: loadMuell },
+  // Luftqualität an der Messstation Gärtringen (Umweltbundesamt)
+  "/luft": { maxAge: 1800, load: loadLuft },
+  // UV-Index für Stuttgart (DWD), die nächstgelegene Station der Vorhersage
+  "/uv": { maxAge: 3600, load: loadUv },
+  // Waldbrandgefahrenindex des DWD, Station Stuttgart (Flughafen), die dem Schönbuch nächste in der Tabelle
+  "/waldbrand": { maxAge: 10800, load: loadWaldbrand },
+  // Veranstaltungskalender der Stadt: nur als PDF veröffentlicht, daher nur der Link zum aktuellen Monat
+  "/termine": { maxAge: 21600, load: loadTermine },
 };
 
 const CORS = {
@@ -321,6 +333,74 @@ async function loadRegion() {
   return { updated: new Date().toISOString(), attribution: "Quelle: Presseportal.de / news aktuell – Original-Content der jeweiligen Behörde", items: items.slice(0, 15) };
 }
 
+/* ---------- Spritpreise ---------- */
+async function loadSprit(env) {
+  if (!env.TANKERKOENIG_KEY) return { stationen: [] };
+  const d = await get(`https://creativecommons.tankerkoenig.de/json/list.php?lat=${HOME.lat}&lng=${HOME.lon}&rad=4&sort=dist&type=all&apikey=${env.TANKERKOENIG_KEY}`);
+  if (!d.ok) throw new Error(d.message || "Tankerkönig");
+  const stationen = (d.stations || []).filter((x) => /holzgerlingen/i.test(x.place || "")).map((x) => ({
+    marke: (x.brand || x.name || "").trim(), strasse: `${x.street || ""} ${x.houseNumber || ""}`.trim(),
+    e5: x.e5 || null, e10: x.e10 || null, diesel: x.diesel || null, offen: !!x.isOpen,
+  }));
+  return { stand: new Date().toISOString(), quelle: "MTS-K über Tankerkönig (CC BY 4.0)", stationen };
+}
+
+/* ---------- Müllkalender (ICS) ---------- */
+async function loadMuell(env) {
+  if (!env.MUELL_ICS_URL) return { eintraege: [] };
+  const ics = (await get(env.MUELL_ICS_URL, "text")).replace(/\r?\n[ \t]/g, "");
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin" }).format(new Date());
+  const eintraege = [];
+  for (const m of ics.matchAll(/BEGIN:VEVENT([\s\S]*?)END:VEVENT/g)) {
+    const d = m[1].match(/DTSTART[^:]*:(\d{4})(\d\d)(\d\d)/), t = m[1].match(/SUMMARY[^:]*:(.*)/);
+    if (!d || !t) continue;
+    const datum = `${d[1]}-${d[2]}-${d[3]}`;
+    if (datum >= today) eintraege.push({ datum, art: t[1].trim().replace(/\\,/g, ",") });
+  }
+  eintraege.sort((a, b) => a.datum.localeCompare(b.datum));
+  return { eintraege: eintraege.slice(0, 8) };
+}
+
+/* ---------- Luftqualität ---------- */
+const LUFT_STOFFE = { 1: "Feinstaub (PM10)", 3: "Ozon", 5: "Stickstoffdioxid", 9: "Feinstaub (PM2,5)" };
+const LUFT_STUFEN = ["sehr gut", "gut", "mäßig", "schlecht", "sehr schlecht"];
+async function loadLuft() {
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin" }).format(new Date());
+  const d = await get(`https://luftdaten.umweltbundesamt.de/api/air-data/v4/airquality/json?date_from=${day}&time_from=1&date_to=${day}&time_to=24&station=313&lang=de`);
+  const rows = Object.entries(d.data?.["313"] || {}).filter(([, v]) => v[1] != null);
+  if (!rows.length) return { index: null };
+  const [zeit, v] = rows[rows.length - 1];
+  const stoffe = v.slice(3).filter((c) => Array.isArray(c));
+  const worst = stoffe.reduce((a, b) => (b[2] > (a?.[2] ?? -1) ? b : a), null);
+  return { stand: zeit, index: v[1], stufe: LUFT_STUFEN[v[1]] || "", stoff: worst ? LUFT_STOFFE[worst[0]] || "" : "", station: "Gärtringen", quelle: "Umweltbundesamt mit Daten der Messnetze der Länder und des Bundes" };
+}
+
+/* ---------- UV-Index ---------- */
+async function loadUv() {
+  const d = await get("https://opendata.dwd.de/climate_environment/health/alerts/uvi.json");
+  const c = (d.content || []).find((x) => x.city === "Stuttgart");
+  return { heute: c?.forecast?.today ?? null, morgen: c?.forecast?.tomorrow ?? null, stand: d.last_update };
+}
+
+/* ---------- Waldbrandgefahr ---------- */
+const WBI_STUFEN = ["", "sehr gering", "gering", "mittel", "hoch", "sehr hoch"];
+async function loadWaldbrand() {
+  const html = await get("https://www.dwd.de/DWD/warnungen/agrar/wbx/wbx_tab_alle_BW.html", "text");
+  const row = html.match(/Stuttgart \(Flughafen\)<\/td>([\s\S]*?)<\/tr>/);
+  const werte = row ? [...row[1].matchAll(/>(\d)<\/td>/g)].map((m) => +m[1]) : [];
+  return { heute: werte[0] ?? null, morgen: werte[1] ?? null, stufe: WBI_STUFEN[werte[0]] || "", station: "Stuttgart (Flughafen)", quelle: "Deutscher Wetterdienst" };
+}
+
+/* ---------- Veranstaltungen ---------- */
+async function loadTermine() {
+  const base = "https://www.holzgerlingen.de", seite = `${base}/de/aktuelles/veranstaltungskalender/`;
+  const html = await get(seite, "text");
+  const monat = new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", month: "long" }).format(new Date());
+  const jahr = new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", year: "numeric" }).format(new Date());
+  const m = html.match(new RegExp(`href="([^"]*${monat}${jahr}[^"]*\\.pdf)"`, "i"));
+  return { monat, pdf: m ? base + m[1] : null, seite };
+}
+
 function decode(s) {
   return s
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
@@ -349,7 +429,7 @@ export default {
 
     let body;
     try {
-      body = await route.load();
+      body = await route.load(env);
     } catch (e) {
       return json({ error: "Quelle nicht erreichbar" }, 502);
     }
@@ -361,6 +441,6 @@ export default {
 
   // Alle 15 Minuten: neue Warnungen als Push-Mitteilung verschicken
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(checkAndNotify(env, HOME, loadVerkehr, loadBahn));
+    ctx.waitUntil(checkAndNotify(env, HOME, loadVerkehr, loadBahn, () => loadMuell(env)));
   },
 };

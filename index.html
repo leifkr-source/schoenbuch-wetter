@@ -218,6 +218,13 @@ button{font:inherit;color:inherit}
 .tinfo{background:var(--warn-bg);color:var(--warn-ink);border-radius:12px;padding:10px 12px;margin-top:10px;font-size:.88rem}
 .around .tinfo summary{cursor:pointer;font-weight:700;color:inherit;padding:0}
 .tinfo p{margin:8px 0 0;white-space:pre-line}
+.frow{display:grid;grid-template-columns:1fr auto auto auto;gap:4px 12px;align-items:baseline;font-size:.92rem}
+.frow .fh{font-size:.75rem;color:var(--muted);text-align:right}
+.frow .fp{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.frow .fp.low{color:var(--accent);font-weight:800}
+.frow small{display:block;color:var(--muted);font-size:.78rem}
+.frow .closed{color:var(--muted);font-weight:400}
+.wnext{font-weight:600}
 .news{display:flex;flex-direction:column;gap:8px}
 .nlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .nlist li{border-bottom:1px solid var(--line)}
@@ -262,6 +269,7 @@ footer a{color:inherit}
 
   <p class="summary" id="summary"></p>
   <p class="outwin" id="outwin" hidden></p>
+  <p class="outwin" id="wear" hidden></p>
 
   <section class="hero" aria-label="Aktuelles Wetter">
     <div class="temp num" id="temp">–<sup>°</sup></div>
@@ -325,6 +333,10 @@ footer a{color:inherit}
     <h2 id="ah">Rund um Holzgerlingen</h2>
     <div id="aroundTrain" hidden></div>
     <div id="aroundTraffic"><h3>Sperrungen</h3><p class="pnote">Wird geladen …</p></div>
+    <div id="aroundWaste" hidden></div>
+    <div id="aroundFuel" hidden></div>
+    <div id="aroundAir" hidden></div>
+    <div id="aroundFire" hidden></div>
     <div id="aroundTown" hidden></div>
   </section>
 
@@ -394,19 +406,22 @@ async function getJSON(url){
 }
 function dayKey(d){ return fmtDay.format(d); }
 
+let UV_TODAY = null; // nur ab 3 anzeigen (ab da empfiehlt sich Sonnenschutz)
 let YESTERDAY = null; // stündliche Werte von gestern, für den Vergleich im Tagessatz
 async function load(){
   const now = new Date();
   const start = dayKey(now);
   const end = dayKey(new Date(now.getTime()+8*864e5));
   const q = `lat=${LAT}&lon=${LON}&tz=${TZ}`;
-  const [cur, wx, al, rd, yd] = await Promise.allSettled([
+  const [cur, wx, al, rd, yd, uv] = await Promise.allSettled([
     getJSON(`${API}/current_weather?${q}`),
     getJSON(`${API}/weather?${q}&date=${start}&last_date=${end}`),
     getJSON(`${API}/alerts?lat=${LAT}&lon=${LON}`),
     getJSON(`${API}/radar?${q}&distance=20000&format=plain`),
-    getJSON(`${API}/weather?${q}&date=${dayKey(new Date(now.getTime()-864e5))}&last_date=${start}`)
+    getJSON(`${API}/weather?${q}&date=${dayKey(new Date(now.getTime()-864e5))}&last_date=${start}`),
+    getJSON(`${BACKEND}/uv`)
   ]);
+  UV_TODAY = uv.status==="fulfilled" ? uv.value.heute : null;
   YESTERDAY = yd.status==="fulfilled" ? yd.value.weather : null;
   const demo = wx.status!=="fulfilled";
   $("demo").hidden = !demo;
@@ -415,12 +430,12 @@ async function load(){
   renderNow(current);
   renderHours(hourly, now);
   renderDays(hourly, now);
-  renderSummary(hourly, now);
   renderCar(hourly, now);
   loadPollen();
   loadAround();
   renderAlerts(al.status==="fulfilled" ? al.value.alerts : (demo ? demoAlerts(now) : null));
   initRadar(rd.status==="fulfilled" ? rd.value : demoRadar(now), rd.status!=="fulfilled");
+  renderSummary(hourly, now); // nach dem Radar, weil es dessen Werte nutzt
   // Online zählt, wann zuletzt geladen wurde; offline, wie alt die gespeicherten Daten sind
   $("stamp").textContent = demo ? `Beispiel · ${fmtT.format(now)} Uhr`
     : navigator.onLine ? `Aktualisiert ${fmtT.format(now)} Uhr ↻`
@@ -439,7 +454,8 @@ function renderNow(c){
     gust!=null ? `<span>Böen <b>${r0(gust)} km/h</b></span>` : "",
     c.relative_humidity!=null ? `<span>Feuchte <b>${r0(c.relative_humidity)} %</b></span>` : "",
     c.cloud_cover!=null ? `<span>Wolken <b>${r0(c.cloud_cover)} %</b></span>` : "",
-    lightFact()
+    lightFact(),
+    UV_TODAY >= 3 ? `<span>UV-Index <b>${UV_TODAY}</b></span>` : ""
   ].filter(Boolean).join("");
 }
 /* Dämmerung (bürgerlich, Sonne 6° unter dem Horizont) nach NOAA, ohne externe Daten */
@@ -583,9 +599,10 @@ function trafficBase(){
 /* ---------- Radar ---------- */
 const PLACES = [["Holzgerlingen",48.6386,9.0117,true],["Böblingen",48.6833,9.0167],["Sindelfingen",48.7133,9.0028],
   ["Herrenberg",48.5967,8.8706],["Tübingen",48.5216,9.0576],["Weil im Schönbuch",48.6214,9.0636],["Ehningen",48.6589,8.9411],["Waldenbuch",48.6375,9.1311]];
-let R = null, frame = 0, timer = null;
+let R = null, frame = 0, timer = null, RADAR_RAIN = []; // RADAR_RAIN: [{t, wet}] für den Tagessatz
 function initRadar(data, isDemo){
   const frames = (data.radar||[]).filter(f=>f.precipitation_5);
+  RADAR_RAIN = [];
   if(!frames.length){ $("nowcastText").textContent = "Radar gerade nicht verfügbar."; return; }
   const g = frames[0].precipitation_5;
   R = {frames, rows:g.length, cols:g[0].length, pos:data.latlon_position || {x:g[0].length/2, y:g.length/2}, demo:isDemo};
@@ -643,6 +660,7 @@ function nowcast(now){
   const {x,y} = R.pos, xi=Math.round(x), yi=Math.round(y);
   const at = f => { let m=0; for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){ const row=f.precipitation_5[yi+dy]; if(row&&row[xi+dx]!=null) m=Math.max(m,row[xi+dx]); } return m*0.01*12; };
   const cur = R.frames[frame], curV = at(cur);
+  if(!R.demo) RADAR_RAIN = R.frames.filter(f=>new Date(f.timestamp).getTime()>=now-5*6e4).map(f=>({t:new Date(f.timestamp).getTime(), wet:at(f)>=0.1}));
   const future = R.frames.filter(f=>new Date(f.timestamp).getTime()>now);
   const lastT = R.frames[R.frames.length-1].timestamp, horizon = Math.round((new Date(lastT)-now)/6e4);
   let txt;
@@ -665,10 +683,16 @@ function renderSummary(h, now){
   const list = h.filter(x=>{
     const t = new Date(x.timestamp), hh = hourOf(t);
     if(dayKey(t)!==target) return false;
-    return evening ? hh>=6 && hh<=22 : t.getTime() >= now.getTime()-36e5;
+    return evening ? hh>=6 && hh<=22 : t.getTime() + 36e5 > now.getTime(); // ab der laufenden Stunde
   });
   if(!list.length) return;
-  const wet = x => (x.precipitation||0) >= 0.1 || (x.precipitation_probability||0) >= 60;
+  // Soweit das Radar reicht (ca. 2 h), zählt es statt der Stundenvorhersage, damit Satz und Regenhinweis übereinstimmen
+  const radarEnd = RADAR_RAIN.length ? RADAR_RAIN[RADAR_RAIN.length-1].t : 0;
+  const wet = x => {
+    const t = new Date(x.timestamp).getTime();
+    if(!evening && t + 36e5 <= radarEnd) return RADAR_RAIN.some(f=>f.t>=t && f.t<t+36e5 && f.wet);
+    return (x.precipitation||0) >= 0.1 || (x.precipitation_probability||0) >= 60;
+  };
   const uhr = x => hourOf(new Date(x.timestamp)) + " Uhr";
   const firstWet = list.findIndex(wet);
   let s;
@@ -688,6 +712,21 @@ function renderSummary(h, now){
   if(gust >= 50) out += ` Böen bis ${r0(gust)} km/h.`;
   $("summary").textContent = out;
   renderOutWindow(h, now, evening);
+  renderWear(list, wet, evening);
+}
+
+/* Was anziehen? Aus gefühlter Temperatur (mit Wind) und Regen */
+function renderWear(list, wet, evening){
+  const day = list.filter(x=>{ const hh = hourOf(new Date(x.timestamp)); return hh>=7 && hh<=21; });
+  if(!day.length){ $("wear").hidden = true; return; }
+  const feels = x => x.temperature - Math.min(6, (x.wind_speed||0)/8);
+  const lo = Math.min(...day.map(feels)), hi = Math.max(...day.map(feels));
+  let t = lo <= 0 ? "Dicke Jacke, Mütze und Handschuhe" : lo <= 6 ? "Dicke Jacke" : lo <= 13 ? "Jacke" : lo <= 19 ? "Pullover oder leichte Jacke" : "T-Shirt";
+  if(lo > 19 && hi >= 28) t = "Luftig anziehen";
+  else if(lo <= 19 && hi >= 22) t += ", tagsüber reicht weniger";
+  const rain = day.some(wet);
+  $("wear").innerHTML = `${evening?"Morgen anziehen":"Anziehen"}: <b>${t}</b>${rain?" und Schirm":""}.`;
+  $("wear").hidden = false;
 }
 
 /* Vergleich mit dem Vortag: tagsüber heute ↔ gestern, abends morgen ↔ heute (Höchstwerte 7–21 Uhr) */
@@ -818,6 +857,84 @@ function loadAround(){
   $("aroundTown").innerHTML = `<h3>Aus dem Rathaus</h3><ul class="alist"><li><i class="dot"></i><div><a href="${MAYOR_WA}" target="_blank" rel="noopener"><b>Bürgermeister Delakos auf WhatsApp</b></a><small>Aktuelle Infos direkt aus dem Rathaus</small></div></li></ul>`;
   $("aroundTown").hidden = false;
   renderNews();
+  getJSON(`${BACKEND}/muell`).then(renderWaste).catch(()=>{});
+  getJSON(`${BACKEND}/sprit`).then(renderFuel).catch(()=>{});
+  getJSON(`${BACKEND}/luft`).then(renderAir).catch(()=>{});
+  getJSON(`${BACKEND}/waldbrand`).then(renderFire).catch(()=>{});
+  getJSON(`${BACKEND}/termine`).then(renderEvents).catch(()=>{});
+}
+
+/* Müll: nächste Abholung, nur sichtbar wenn der Kalender hinterlegt ist */
+function renderWaste(d){
+  const list = d.eintraege || [];
+  if(!list.length) return;
+  const first = list[0].datum, next = list.filter(x=>x.datum===first).map(x=>x.art).join(", ");
+  const today = dayKey(new Date()), tomorrow = dayKey(new Date(Date.now()+864e5));
+  const when = first===today ? "Heute" : first===tomorrow ? "Morgen früh" : `${fmtD.format(new Date(first+"T12:00"))}, ${fmtDate.format(new Date(first+"T12:00"))}`;
+  const el = $("aroundWaste");
+  el.innerHTML = `<h3>Müll</h3><p class="pnote"><span class="wnext"></span></p>`;
+  el.querySelector(".wnext").textContent = `${when}: ${next}`;
+  el.hidden = false;
+}
+
+/* Spritpreise: die Tankstellen in Holzgerlingen; günstigster Preis je Sorte hervorgehoben */
+function renderFuel(d){
+  const list = d.stationen || [];
+  if(!list.length) return;
+  const sorts = ["e5","e10","diesel"], low = {};
+  for(const k of sorts) low[k] = Math.min(...list.filter(x=>x.offen && x[k]).map(x=>x[k]));
+  const price = p => p ? p.toFixed(2).replace(".",",") : "–";
+  const el = $("aroundFuel");
+  el.innerHTML = `<h3>Spritpreise</h3><div class="frow"><span></span><span class="fh">E5</span><span class="fh">E10</span><span class="fh">Diesel</span></div>`;
+  const g = el.querySelector(".frow");
+  for(const x of list){
+    const name = document.createElement("div");
+    const b = document.createElement("span"); b.textContent = x.marke;
+    const sm = document.createElement("small"); sm.textContent = x.offen ? x.strasse : `${x.strasse} · geschlossen`;
+    name.append(b, sm); g.append(name);
+    for(const k of sorts){
+      const c = document.createElement("span");
+      c.className = "fp" + (!x.offen ? " closed" : x[k] && x[k]===low[k] ? " low" : "");
+      c.textContent = price(x[k]); g.append(c);
+    }
+  }
+  const src = document.createElement("p"); src.className = "pnote"; src.textContent = `Euro je Liter. Quelle: ${d.quelle}`;
+  el.append(src);
+  el.hidden = false;
+}
+
+/* Luftqualität: nur wenn auffällig (ab „schlecht“) */
+function renderAir(d){
+  if(!(d.index >= 3)) return;
+  const el = $("aroundAir");
+  el.innerHTML = `<h3>Luftqualität</h3><p class="pnote"><span class="wnext"></span></p>`;
+  el.querySelector(".wnext").textContent = `Gerade ${d.stufe}${d.stoff?` (${d.stoff})`:""} in ${d.station}`;
+  const src = document.createElement("p"); src.className = "pnote"; src.textContent = `Quelle: ${d.quelle}`;
+  el.append(src);
+  el.hidden = false;
+}
+
+/* Waldbrandgefahr: nur wenn auffällig (ab Stufe 3 von 5) */
+function renderFire(d){
+  if(!(d.heute >= 3)) return;
+  const el = $("aroundFire");
+  el.innerHTML = `<h3>Waldbrandgefahr</h3><p class="pnote"><span class="wnext"></span></p>`;
+  el.querySelector(".wnext").textContent = `Heute ${d.stufe} (Stufe ${d.heute} von 5), Messstelle ${d.station}`;
+  const src = document.createElement("p"); src.className = "pnote"; src.textContent = `Quelle: ${d.quelle}`;
+  el.append(src);
+  el.hidden = false;
+}
+
+/* Veranstaltungen: Die Stadt veröffentlicht den Kalender nur als PDF, daher nur der Link */
+function renderEvents(d){
+  const ul = $("aroundTown").querySelector("ul");
+  if(!ul) return;
+  const li = document.createElement("li");
+  li.innerHTML = `<i class="dot"></i><div><a target="_blank" rel="noopener"><b></b></a><small>Kalender der Stadt Holzgerlingen</small></div>`;
+  const a = li.querySelector("a");
+  a.href = d.pdf || d.seite;
+  a.querySelector("b").textContent = `Veranstaltungen im ${d.monat}${d.pdf?" (PDF)":""}`;
+  ul.append(li);
 }
 
 /* Aus der Region: Blaulicht-Meldungen (Polizei, Bundespolizei, Feuerwehr) über /region.

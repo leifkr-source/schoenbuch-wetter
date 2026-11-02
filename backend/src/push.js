@@ -151,7 +151,7 @@ async function morningBriefing({ lat, lon }, loadVerkehr, loadBahn) {
 
 // Zeitgesteuert (Cron), alle 15 Minuten
 export { morningBriefing };
-export async function checkAndNotify(env, { lat, lon }, loadVerkehr, loadBahn) {
+export async function checkAndNotify(env, { lat, lon }, loadVerkehr, loadBahn, loadMuell) {
   if (!env.PUSH || !env.VAPID_PRIVATE_JWK) return;
   // Beim allerersten Lauf nur merken, was es schon gibt, damit nicht alte Meldungen auf einmal kommen
   const first = !(await env.PUSH.get("init"));
@@ -215,6 +215,15 @@ export async function checkAndNotify(env, { lat, lon }, loadVerkehr, loadBahn) {
         await broadcast(env, msg, (s) => s.morning);
         log.push("morning");
       }
+    } catch {}
+  }
+
+  // 5. Müll: abends um 18 Uhr erinnern, wenn morgen abgeholt wird
+  if (h === 18 && min < 15) {
+    try {
+      const morgen = localDay(Date.now() + 864e5);
+      const arten = ((await loadMuell()).eintraege || []).filter((x) => x.datum === morgen).map((x) => x.art);
+      if (arten.length && (await once(env, "muell:" + morgen, 2 * 86400, { title: "Morgen früh Müll rausstellen", body: arten.join(", "), tag: "muell" }, false))) log.push("muell");
     } catch {}
   }
 
