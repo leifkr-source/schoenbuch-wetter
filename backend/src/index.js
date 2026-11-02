@@ -36,7 +36,7 @@ const ROUTES = {
 };
 
 // Hochzählen, wenn sich das Antwortformat ändert, damit keine alte Antwort aus dem Zwischenspeicher kommt
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -136,7 +136,7 @@ function closureLabel(x, info) {
 
 /* ---------- Verkehr ---------- */
 async function loadVerkehr() {
-  const now = Date.now(), soon = now + 14 * 864e5;
+  const now = Date.now(), soon = now + 3 * 864e5; // nur was jetzt gilt oder in den nächsten 3 Tagen beginnt
   const aktiv = (von, bis) => (!von || Date.parse(von) <= soon) && (!bis || Date.parse(bis) >= now);
   const items = [];
 
