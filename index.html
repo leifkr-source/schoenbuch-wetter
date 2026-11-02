@@ -218,7 +218,7 @@ button{font:inherit;color:inherit}
 .tinfo{background:var(--warn-bg);color:var(--warn-ink);border-radius:12px;padding:10px 12px;margin-top:10px;font-size:.88rem}
 .around .tinfo summary{cursor:pointer;font-weight:700;color:inherit;padding:0}
 .tinfo p{margin:8px 0 0;white-space:pre-line}
-.frow{display:grid;grid-template-columns:1fr auto auto auto;gap:4px 12px;align-items:baseline;font-size:.92rem}
+.frow{display:grid;grid-template-columns:1fr auto auto;gap:4px 12px;align-items:baseline;font-size:.92rem}
 .frow .fh{font-size:.75rem;color:var(--muted);text-align:right}
 .frow .fp{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
 .frow .fp.low{color:var(--accent);font-weight:800}
@@ -885,16 +885,16 @@ function renderWaste(d){
 const FUEL_LINK = "https://www.benzinpreis-aktuell.de/71088-holzgerlingen-aktuelle-benzinpreise";
 function renderFuel(d){
   const list = d.stationen || [];
-  if(!list.length){ // ohne Tankerkönig-Schlüssel nur der Link zur Preisliste
+  if(!list.length){ // falls TankPuls nichts liefert, wenigstens der Link zur Preisliste
     $("aroundFuel").innerHTML = `<h3>Spritpreise</h3><ul class="alist"><li><i class="dot"></i><div><a href="${FUEL_LINK}" target="_blank" rel="noopener"><b>Aktuelle Preise in Holzgerlingen</b></a><small>Aral, JET und HEM, bei benzinpreis-aktuell.de</small></div></li></ul>`;
     $("aroundFuel").hidden = false;
     return;
   }
-  const sorts = ["e5","e10","diesel"], low = {};
+  const sorts = ["e10","diesel"], low = {};
   for(const k of sorts) low[k] = Math.min(...list.filter(x=>x.offen && x[k]).map(x=>x[k]));
-  const price = p => p ? p.toFixed(2).replace(".",",") : "–";
+  const price = p => p ? p.toFixed(3).replace(".",",") : "–";
   const el = $("aroundFuel");
-  el.innerHTML = `<h3>Spritpreise</h3><div class="frow"><span></span><span class="fh">E5</span><span class="fh">E10</span><span class="fh">Diesel</span></div>`;
+  el.innerHTML = `<h3>Spritpreise</h3><div class="frow"><span></span><span class="fh">E10</span><span class="fh">Diesel</span></div>`;
   const g = el.querySelector(".frow");
   for(const x of list){
     const name = document.createElement("div");

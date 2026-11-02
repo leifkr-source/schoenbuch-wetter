@@ -21,7 +21,7 @@ const ROUTES = {
   "/region": { maxAge: 900, load: loadRegion },
   // Schönbuchbahn ab Holzgerlingen und Anschlüsse ab Böblingen, Echtzeit vom VVS (EFA)
   "/bahn": { maxAge: 60, load: loadBahn },
-  // Spritpreise der Tankstellen in Holzgerlingen (Tankerkönig, CC BY 4.0; Schlüssel als Secret TANKERKOENIG_KEY)
+  // Spritpreise der Tankstellen in Holzgerlingen (TankPuls, MTS-K-Daten, CC BY 4.0)
   "/sprit": { maxAge: 300, load: loadSprit },
   // Nächste Müll-Abholungen laut Stadt Holzgerlingen
   "/muell": { maxAge: 3600, load: loadMuell },
@@ -34,6 +34,9 @@ const ROUTES = {
   // Veranstaltungskalender der Stadt: nur als PDF veröffentlicht, daher nur der Link zum aktuellen Monat
   "/termine": { maxAge: 21600, load: loadTermine },
 };
+
+// Hochzählen, wenn sich das Antwortformat ändert, damit keine alte Antwort aus dem Zwischenspeicher kommt
+const CACHE_VERSION = 2;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -333,16 +336,19 @@ async function loadRegion() {
   return { updated: new Date().toISOString(), attribution: "Quelle: Presseportal.de / news aktuell – Original-Content der jeweiligen Behörde", items: items.slice(0, 15) };
 }
 
-/* ---------- Spritpreise ---------- */
-async function loadSprit(env) {
-  if (!env.TANKERKOENIG_KEY) return { stationen: [] };
-  const d = await get(`https://creativecommons.tankerkoenig.de/json/list.php?lat=${HOME.lat}&lng=${HOME.lon}&rad=4&sort=dist&type=all&apikey=${env.TANKERKOENIG_KEY}`);
-  if (!d.ok) throw new Error(d.message || "Tankerkönig");
-  const stationen = (d.stations || []).filter((x) => /holzgerlingen/i.test(x.place || "")).map((x) => ({
-    marke: (x.brand || x.name || "").trim(), strasse: `${x.street || ""} ${x.houseNumber || ""}`.trim(),
-    e5: x.e5 || null, e10: x.e10 || null, diesel: x.diesel || null, offen: !!x.isOpen,
+/* ---------- Spritpreise (TankPuls, Lesen ohne Schlüssel; Quellenangabe Pflicht) ---------- */
+async function loadSprit() {
+  const stationen = new Map();
+  await Promise.all(["e10", "diesel"].map(async (fuel) => {
+    const d = await get(`https://api.tankpuls.de/api/search/cheapest?minLat=48.61&minLng=8.97&maxLat=48.67&maxLng=9.05&fuel=${fuel}&limit=20`);
+    for (const x of d.items || []) {
+      if (!/holzgerlingen/i.test(x.city || "")) continue;
+      const st = stationen.get(x.id) || { marke: (x.brandName || x.name || "").trim(), strasse: (x.street || "").trim(), e10: null, diesel: null, offen: x.status === "open" };
+      st[fuel] = x.priceCents ? x.priceCents / 1000 : null;
+      stationen.set(x.id, st);
+    }
   }));
-  return { stand: new Date().toISOString(), quelle: "MTS-K über Tankerkönig (CC BY 4.0)", stationen };
+  return { stand: new Date().toISOString(), quelle: "MTS-K über tankerkoenig.de, CC BY 4.0 · TankPuls", stationen: [...stationen.values()] };
 }
 
 /* ---------- Müllkalender ---------- */
@@ -441,7 +447,7 @@ export default {
 
     // Zwischenspeicher pro Pfad (für alle Nutzer gemeinsam)
     const cache = caches.default;
-    const key = new Request(new URL(pathname, request.url).toString());
+    const key = new Request(new URL(pathname + "?v=" + CACHE_VERSION, request.url).toString());
     const hit = await cache.match(key);
     if (hit) return hit;
 
