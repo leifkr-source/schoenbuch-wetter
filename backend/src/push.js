@@ -2,6 +2,7 @@
 // Speicher: Cloudflare KV (Bindung PUSH). Schlüssel:
 //   sub:<hash>          → Push-Anmeldung eines Geräts (JSON, mit Einstellung morning: true/false)
 //   seen:<art>:<id>     → diese Meldung wurde schon verschickt (läuft automatisch ab)
+//   cool:a81            → eben erst eine A81-Mitteilung verschickt (1 Stunde Pause)
 // Geheimnis: VAPID_PRIVATE_JWK (mit „wrangler secret put“ gesetzt, nie im Code)
 
 import { buildPushHTTPRequest } from "@pushforge/builder";
@@ -149,6 +150,16 @@ async function morningBriefing({ lat, lon }, loadVerkehr, loadBahn) {
   return { title, body: parts.join(" "), tag: "morgen" };
 }
 
+// Eine Mitteilung für eine oder mehrere neue Sperrungen
+function a81Message(list) {
+  if (list.length === 1) {
+    const x = list[0], when = x.bis ? `bis ${fmt(x.bis, { day: "numeric", month: "short" })}` : "";
+    return { title: `Sperrung ${x.titel}`, body: [x.richtung, when].filter(Boolean).join(", "), tag: "a81" };
+  }
+  const body = list.slice(0, 4).map((x) => x.titel).join(" · ") + (list.length > 4 ? ` und ${list.length - 4} weitere` : "");
+  return { title: `${list.length} neue Sperrungen auf der A81`, body, tag: "a81" };
+}
+
 // Zeitgesteuert (Cron), alle 15 Minuten
 export { morningBriefing };
 export async function checkAndNotify(env, { lat, lon }, loadVerkehr, loadBahn, loadMuell) {
@@ -191,16 +202,32 @@ export async function checkAndNotify(env, { lat, lon }, loadVerkehr, loadBahn, l
     } catch {}
   }
 
-  // 3. Neue Sperrungen auf der A81 in der Nähe (bis 10 km), die jetzt gelten oder in den nächsten 24 h beginnen
+  // 3. Neue Sperrungen auf der A81 in der Nähe (bis 10 km), die jetzt gelten oder in den nächsten 24 h beginnen.
+  // Alle neuen Sperrungen eines Laufs kommen in EINER Mitteilung, und höchstens eine A81-Mitteilung pro Stunde.
+  // Die Kennung enthält kein Datum mehr: Nachtbaustellen bekommen jede Nacht ein neues Zeitfenster und kamen sonst jedes Mal neu.
   try {
     const { eintraege = [] } = await loadVerkehr();
+    const neu = [];
     for (const x of eintraege) {
       if (x.strasse !== "A81" || x.art !== "sperrung" || x.km > 10) continue;
       if (x.von && Date.parse(x.von) > Date.now() + 864e5) continue;
-      const when = x.bis ? `bis ${fmt(x.bis, { day: "numeric", month: "short" })}` : "";
-      const ttl = x.bis ? (Date.parse(x.bis) - Date.now()) / 1000 + 86400 : 30 * 86400;
-      const id = "a81:" + (await hash(x.titel + "|" + x.richtung + "|" + (x.von || "")));
-      if (await once(env, id, ttl, { title: `Sperrung ${x.titel}`, body: [x.richtung, when].filter(Boolean).join(", "), tag: "a81" }, first)) log.push("a81");
+      const k = "seen:a81:" + (await hash(x.titel + "|" + x.richtung));
+      if (neu.some((n) => n.k === k) || (await env.PUSH.get(k))) continue;
+      // Übergang: schon mit der alten Kennung (mit Datum) verschickt? Dann nur neu merken, nicht nochmal melden.
+      const alt = await env.PUSH.get("seen:a81:" + (await hash(x.titel + "|" + x.richtung + "|" + (x.von || ""))));
+      neu.push({ k, x, quiet: first || !!alt });
+    }
+    const melden = neu.filter((n) => !n.quiet);
+    // Gerade erst etwas zur A81 geschickt? Dann warten; die neuen Sperrungen bleiben offen und kommen gesammelt im nächsten Lauf.
+    const pause = melden.length && (await env.PUSH.get("cool:a81"));
+    if (!pause) {
+      const ttl = (x) => Math.max(30 * 86400, x.bis ? (Date.parse(x.bis) - Date.now()) / 1000 + 86400 : 0);
+      for (const { k, x } of neu) await env.PUSH.put(k, "1", { expirationTtl: Math.round(ttl(x)) });
+      if (melden.length) {
+        await env.PUSH.put("cool:a81", "1", { expirationTtl: 3600 });
+        await broadcast(env, a81Message(melden.map((n) => n.x)));
+        log.push("a81");
+      }
     }
   } catch {}
 
